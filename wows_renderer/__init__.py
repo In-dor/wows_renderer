@@ -15,6 +15,9 @@ from nonebot.log import logger
 from nonebot.matcher import Matcher
 from nonebot.rule import Rule
 
+import sys
+from pathlib import Path
+
 # --- 从驱动器中加载配置 ---
 # 这一步会读取 .env 文件并填充到我们定义的 Config 模型中
 plugin_config = Config.parse_obj(nonebot.get_driver().config.dict())
@@ -22,8 +25,16 @@ plugin_config = Config.parse_obj(nonebot.get_driver().config.dict())
 # --- 配置部分 (不变) ---
 TEMP_PATH = Path("cache/wows_render/temp")
 OUTPUT_PATH = Path("cache/wows_render/output")
-RENDERER_PROJECT_PATH = plugin_config.renderer_project_path
-PYTHON_EXECUTABLE = str(RENDERER_PROJECT_PATH / "venv/Scripts/python.exe")
+RENDERER_PROJECT_PATH = Path(plugin_config.renderer_project_path)
+RENDERER_SCRIPT = str(RENDERER_PROJECT_PATH / "run.py")
+REPLAYS_FOLDER = str(RENDERER_PROJECT_PATH / "replays")
+# --- 【关键修改】根据操作系统动态生成正确的 Python 解释器路径 ---
+if sys.platform == "win32":
+    # 如果是 Windows 系统
+    PYTHON_EXECUTABLE = str(RENDERER_PROJECT_PATH / "venv" / "Scripts" / "python.exe")
+else:
+    # 如果是 Linux, macOS 或其他类 Unix 系统
+    PYTHON_EXECUTABLE = str(RENDERER_PROJECT_PATH / "venv" / "bin" / "python")
 TEMP_PATH.mkdir(parents=True, exist_ok=True)
 OUTPUT_PATH.mkdir(parents=True, exist_ok=True)
 
