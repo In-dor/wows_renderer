@@ -13,8 +13,8 @@ from nonebot.matcher import Matcher
 from nonebot.rule import Rule
 
 # --- 配置部分 (不变) ---
-TEMP_PATH = Path("data/wows_render/temp")
-OUTPUT_PATH = Path("data/wows_render/output")
+TEMP_PATH = Path("cache/wows_render/temp")
+OUTPUT_PATH = Path("cache/wows_render/output")
 RENDERER_PROJECT_PATH = Path(r"F:\[工具]\minimap_renderer")
 PYTHON_EXECUTABLE = str(RENDERER_PROJECT_PATH / "venv/Scripts/python.exe")
 TEMP_PATH.mkdir(parents=True, exist_ok=True)
@@ -81,7 +81,7 @@ async def handle_replay_file(bot: Bot, event: GroupMessageEvent, matcher: Matche
 
         if success and video_file_path.exists():
             logger.info(f"渲染成功，视频位于: {video_file_path}")
-            await matcher.send(f"「{file_name}」渲染完成！")
+            await matcher.send(f"「{file_name}」渲染完成！正在上传...")
             video_uri = video_file_path.resolve().as_uri()
             await bot.upload_group_file(
                 group_id=event.group_id,
