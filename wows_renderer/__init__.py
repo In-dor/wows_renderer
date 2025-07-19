@@ -17,7 +17,7 @@ from nonebot.rule import Rule
 
 # --- 从驱动器中加载配置 ---
 # 这一步会读取 .env 文件并填充到我们定义的 Config 模型中
-plugin_config = Config.parse_obj(nonebot.get_driver().config)
+plugin_config = Config.parse_obj(nonebot.get_driver().config.dict())
 
 # --- 配置部分 (不变) ---
 TEMP_PATH = Path("cache/wows_render/temp")
