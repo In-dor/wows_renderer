@@ -99,13 +99,11 @@ async def handle_replay_file(bot: Bot, event: GroupMessageEvent, matcher: Matche
 
         if success and video_file_path.exists():
             logger.info(f"渲染成功，视频位于: {video_file_path}")
-            await matcher.send(f"「{file_name}」渲染完成！正在上传...")
-            video_uri = video_file_path.resolve().as_uri()
-            await bot.upload_group_file(
-                group_id=event.group_id,
-                file=video_uri,
-                name=f"{Path(file_name).stem}.mp4",
-            )
+
+            # 【关键修改】将上传群文件改为直接发送视频
+            await matcher.send(f"「{file_name}」渲染完成！正在发送视频...")
+            await matcher.send(MessageSegment.video(video_file_path))
+
         else:
             logger.error(f"渲染失败: {file_name}\n日志: {output_log}")
             error_message = f"渲染失败了...\n错误日志 (部分):\n{output_log[-500:]}"
@@ -116,6 +114,7 @@ async def handle_replay_file(bot: Bot, event: GroupMessageEvent, matcher: Matche
         await matcher.send(f"处理过程中发生未知错误: {e}")
 
     finally:
+        # 这一步非常重要，确保临时文件被删除
         if replay_file_path.exists():
             replay_file_path.unlink()
         if video_file_path.exists():
