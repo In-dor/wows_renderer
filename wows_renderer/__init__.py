@@ -4,7 +4,10 @@ import asyncio
 import uuid
 from pathlib import Path
 import shutil
-import httpx  # <--- 就是加上这一行！
+import httpx
+
+import nonebot
+from .config import Config
 
 from nonebot import on_message
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, MessageSegment
@@ -12,10 +15,14 @@ from nonebot.log import logger
 from nonebot.matcher import Matcher
 from nonebot.rule import Rule
 
+# --- 从驱动器中加载配置 ---
+# 这一步会读取 .env 文件并填充到我们定义的 Config 模型中
+plugin_config = Config.parse_obj(nonebot.get_driver().config)
+
 # --- 配置部分 (不变) ---
 TEMP_PATH = Path("cache/wows_render/temp")
 OUTPUT_PATH = Path("cache/wows_render/output")
-RENDERER_PROJECT_PATH = Path(r"F:\[工具]\minimap_renderer")
+RENDERER_PROJECT_PATH = plugin_config.renderer_project_path
 PYTHON_EXECUTABLE = str(RENDERER_PROJECT_PATH / "venv/Scripts/python.exe")
 TEMP_PATH.mkdir(parents=True, exist_ok=True)
 OUTPUT_PATH.mkdir(parents=True, exist_ok=True)
