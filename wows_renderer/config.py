@@ -1,5 +1,6 @@
 """配置模块"""
 
+import nonebot
 from pathlib import Path
 from pydantic import BaseModel, validator
 
@@ -19,3 +20,7 @@ class Config(BaseModel):
         if not v.exists():
             raise ValueError(f"渲染器路径不存在: {v}")
         return v
+
+
+# 创建配置实例
+plugin_config = Config.parse_obj(nonebot.get_driver().config.dict())
