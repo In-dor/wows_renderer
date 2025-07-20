@@ -1,15 +1,21 @@
+"""配置模块"""
+
 from pathlib import Path
-from pydantic import BaseModel
+from pydantic import BaseModel, validator
 
 
 class Config(BaseModel):
-    """
-    wows_renderer 插件的配置类
-    """
+    """战舰世界回放渲染插件的配置类"""
 
-    # 定义渲染器项目的根目录路径
-    # NoneBot 会自动从 .env 文件中读取 RENDERER_PROJECT_PATH 的值
+    # minimap_renderer 项目路径
     renderer_project_path: Path
 
+    # 渲染相关设置
+    render_timeout: int = 600  # 渲染超时时间(秒)
+    enable_cleanup: bool = True  # 是否自动清理临时文件
 
-# Pydantic 会自动处理类型转换，将字符串路径转换为 Path 对象
+    @validator("renderer_project_path")
+    def path_must_exist(cls, v):
+        if not v.exists():
+            raise ValueError(f"渲染器路径不存在: {v}")
+        return v
