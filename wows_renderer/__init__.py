@@ -4,18 +4,12 @@
 使用 minimap_renderer 作为后端渲染引擎
 """
 
-from pathlib import Path
 from nonebot import on_message
 from nonebot.rule import Rule
 from nonebot.adapters.onebot.v11 import GroupMessageEvent
 
 from .handler import handle_replay_file
-
-# 确保缓存目录存在
-TEMP_PATH = Path("cache/wows_render/temp")
-OUTPUT_PATH = Path("cache/wows_render/output")
-TEMP_PATH.mkdir(parents=True, exist_ok=True)
-OUTPUT_PATH.mkdir(parents=True, exist_ok=True)
+from .config import plugin_config  # 导入配置以确保路径被创建
 
 
 # 规则：只响应 .wowsreplay 文件

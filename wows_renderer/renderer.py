@@ -2,7 +2,7 @@
 
 import sys
 import asyncio
-import shutil
+import aiofiles.os
 from pathlib import Path
 from nonebot.log import logger
 
@@ -75,8 +75,8 @@ async def render_replay(replay_path: Path, output_path: Path) -> tuple[bool, str
         if process.returncode == 0:
             if original_video_path.exists():
                 logger.info(f"渲染成功，原始视频位于: {original_video_path}")
-                shutil.move(str(original_video_path), str(output_path))
-                logger.info(f"已将视频移动到目标路径: {output_path}")
+                await aiofiles.os.rename(original_video_path, output_path)
+                logger.info(f"已异步将视频移动到目标路径: {output_path}")
                 return True, "渲染成功", output_log
             else:
                 return False, "渲染进程返回成功，但未找到输出视频", output_log

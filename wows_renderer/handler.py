@@ -8,13 +8,15 @@ from nonebot.matcher import Matcher
 from nonebot.log import logger
 
 import httpx
+import aiofiles
 
 from .renderer import render_replay
 from .utils import cleanup_files
+from .config import plugin_config
 
-# 缓存路径
-TEMP_PATH = Path("cache/wows_render/temp")
-OUTPUT_PATH = Path("cache/wows_render/output")
+# 从配置中获取路径
+TEMP_PATH = plugin_config.wows_render_temp_path
+OUTPUT_PATH = plugin_config.wows_render_output_path
 
 
 async def handle_replay_file(bot: Bot, event: GroupMessageEvent, matcher: Matcher):
@@ -48,18 +50,19 @@ async def handle_replay_file(bot: Bot, event: GroupMessageEvent, matcher: Matche
                 await matcher.finish("❌ 无法获取文件下载链接，请检查机器人权限")
         except Exception as e:
             logger.error(f"获取文件URL失败: {e}")
-            await matcher.finish(f"❌ 获取文件下载链接失败: {e}")
+            await matcher.finish("❌ 获取文件下载链接失败，请检查机器人权限或稍后再试")
 
         # 2. 下载文件
         try:
             async with httpx.AsyncClient() as client:
                 resp = await client.get(file_url, timeout=60)
                 resp.raise_for_status()
-                replay_file_path.write_bytes(resp.content)
-            logger.info(f"已下载回放文件: {replay_file_path}")
+                async with aiofiles.open(replay_file_path, "wb") as f:
+                    await f.write(resp.content)
+            logger.info(f"已异步下载回放文件: {replay_file_path}")
         except Exception as e:
             logger.error(f"下载文件失败: {e}")
-            await matcher.finish(f"❌ 下载回放文件失败: {e}")
+            await matcher.finish("❌ 下载回放文件失败，请稍后再试")
 
         # 3. 渲染视频
         await matcher.send("📥 文件下载完成，正在调用 minimap_renderer 进行渲染...")
@@ -73,7 +76,9 @@ async def handle_replay_file(bot: Bot, event: GroupMessageEvent, matcher: Matche
                 await matcher.send(MessageSegment.video(video_file_path))
             except Exception as e:
                 logger.error(f"发送视频失败: {e}")
-                await matcher.finish(f"⚠️ 视频渲染成功，但发送失败: {e}")
+                await matcher.finish(
+                    "⚠️ 视频渲染成功，但发送失败，请检查机器人权限或联系管理员"
+                )
         else:
             logger.error(f"渲染失败: {message}")
             error_log = log[-500:] if log else "无详细日志"
@@ -83,7 +88,7 @@ async def handle_replay_file(bot: Bot, event: GroupMessageEvent, matcher: Matche
 
     except Exception as e:
         logger.exception(f"处理回放文件时发生错误: {e}")
-        await matcher.finish(f"❌ 处理过程中发生未知错误: {e}")
+        await matcher.finish("❌ 处理过程中发生未知错误，请联系管理员")
 
     finally:
         # 清理临时文件
