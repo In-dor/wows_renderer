@@ -9,12 +9,16 @@ from nonebot.log import logger
 
 from .config import plugin_config
 
-# 根据配置构建路径
-RENDERER_PROJECT_PATH = Path(plugin_config.renderer_project_path)
+# 根据配置构建路径 (仅在本地模式下使用)
+RENDERER_PROJECT_PATH = (
+    Path(plugin_config.renderer_project_path)
+    if plugin_config.renderer_project_path
+    else None
+)
 
 # 确定 Python 解释器路径 (仅本地模式需要)
 PYTHON_EXECUTABLE = None
-if not plugin_config.renderer_api_endpoint:
+if not plugin_config.renderer_api_endpoint and RENDERER_PROJECT_PATH:
     if plugin_config.renderer_python_path:
         # 如果配置中指定了 Python 路径，则优先使用
         PYTHON_EXECUTABLE = Path(plugin_config.renderer_python_path)

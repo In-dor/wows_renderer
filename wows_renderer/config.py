@@ -3,14 +3,15 @@
 import nonebot
 from pathlib import Path
 from typing import Optional
-from pydantic import BaseModel, validator
+from pydantic import BaseModel, validator, root_validator
 
 
 class Config(BaseModel):
     """战舰世界回放渲染插件的配置类"""
 
     # minimap_renderer 项目路径 (作为工作目录)
-    renderer_project_path: Path
+    # 如果配置了 renderer_api_endpoint，则此项为可选
+    renderer_project_path: Optional[Path] = None
 
     # 指定 Python 解释器路径 (可选，用于指定外部 venv 或系统 python)
     renderer_python_path: Optional[Path] = None
@@ -28,9 +29,18 @@ class Config(BaseModel):
 
     @validator("renderer_project_path")
     def renderer_path_must_exist(cls, v):
-        if not v.exists():
+        if v and not v.exists():
             raise ValueError(f"渲染器路径不存在: {v}")
         return v
+
+    @root_validator
+    def check_render_config(cls, values):
+        api_endpoint = values.get("renderer_api_endpoint")
+        project_path = values.get("renderer_project_path")
+
+        if not api_endpoint and not project_path:
+            raise ValueError("必须配置 renderer_project_path (本地渲染) 或 renderer_api_endpoint (远程渲染)")
+        return values
 
     @validator("renderer_python_path")
     def python_path_must_exist(cls, v):
