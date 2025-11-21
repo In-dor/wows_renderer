@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  wows-renderer:
+    build: .
+    container_name: wows-renderer-service
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    # 如果需要限制资源，可以取消注释以下内容
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: '2'
+    #       memory: 4G

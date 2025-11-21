@@ -2,14 +2,21 @@
 
 import nonebot
 from pathlib import Path
+from typing import Optional
 from pydantic import BaseModel, validator
 
 
 class Config(BaseModel):
     """战舰世界回放渲染插件的配置类"""
 
-    # minimap_renderer 项目路径
+    # minimap_renderer 项目路径 (作为工作目录)
     renderer_project_path: Path
+
+    # 指定 Python 解释器路径 (可选，用于指定外部 venv 或系统 python)
+    renderer_python_path: Optional[Path] = None
+
+    # 远程渲染 API 地址 (可选，配置后将优先使用 HTTP 调用)
+    renderer_api_endpoint: Optional[str] = None
 
     # 缓存与输出路径
     wows_render_temp_path: Path = Path("cache/wows_render/temp")
@@ -23,6 +30,12 @@ class Config(BaseModel):
     def renderer_path_must_exist(cls, v):
         if not v.exists():
             raise ValueError(f"渲染器路径不存在: {v}")
+        return v
+
+    @validator("renderer_python_path")
+    def python_path_must_exist(cls, v):
+        if v and not v.exists():
+            raise ValueError(f"Python解释器路径不存在: {v}")
         return v
 
     @validator("wows_render_temp_path", "wows_render_output_path")
