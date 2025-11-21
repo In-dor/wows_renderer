@@ -33,13 +33,15 @@ class Config(BaseModel):
             raise ValueError(f"渲染器路径不存在: {v}")
         return v
 
-    @root_validator
+    @root_validator(skip_on_failure=True)
     def check_render_config(cls, values):
         api_endpoint = values.get("renderer_api_endpoint")
         project_path = values.get("renderer_project_path")
 
         if not api_endpoint and not project_path:
-            raise ValueError("必须配置 renderer_project_path (本地渲染) 或 renderer_api_endpoint (远程渲染)")
+            raise ValueError(
+                "必须配置 renderer_project_path (本地渲染) 或 renderer_api_endpoint (远程渲染)"
+            )
         return values
 
     @validator("renderer_python_path")
