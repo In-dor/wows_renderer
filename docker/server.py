@@ -9,9 +9,42 @@ from typing import Optional
 from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse
 
+
 # 配置日志
-logging.basicConfig(level=logging.INFO)
+class ColoredFormatter(logging.Formatter):
+    """自定义带有颜色的日志格式"""
+
+    grey = "\x1b[38;20m"
+    green = "\x1b[32;20m"
+    yellow = "\x1b[33;20m"
+    red = "\x1b[31;20m"
+    bold_red = "\x1b[31;1m"
+    reset = "\x1b[0m"
+    # 时间精确到秒
+    datefmt = "%Y-%m-%d %H:%M:%S"
+    fmt = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+    FORMATS = {
+        logging.DEBUG: grey + fmt + reset,
+        logging.INFO: green + fmt + reset,
+        logging.WARNING: yellow + fmt + reset,
+        logging.ERROR: red + fmt + reset,
+        logging.CRITICAL: bold_red + fmt + reset,
+    }
+
+    def format(self, record):
+        log_fmt = self.FORMATS.get(record.levelno)
+        formatter = logging.Formatter(log_fmt, datefmt=self.datefmt)
+        return formatter.format(record)
+
+
 logger = logging.getLogger("wows-renderer-server")
+logger.setLevel(logging.INFO)
+# 避免重复添加 handler
+if not logger.handlers:
+    ch = logging.StreamHandler()
+    ch.setFormatter(ColoredFormatter())
+    logger.addHandler(ch)
 
 app = FastAPI(title="WoWs Minimap Renderer Service")
 
@@ -29,9 +62,9 @@ def cleanup_files(files: list[Path]):
         try:
             if file_path.exists():
                 os.remove(file_path)
-                logger.info(f"Deleted temp file: {file_path}")
+                logger.info(f"已删除临时文件: {file_path}")
         except Exception as e:
-            logger.error(f"Failed to delete {file_path}: {e}")
+            logger.error(f"删除文件失败 {file_path}: {e}")
 
 
 @app.get("/")
@@ -48,26 +81,29 @@ async def render_replay(
         raise HTTPException(status_code=400, detail="Invalid file extension")
 
     request_id = str(uuid.uuid4())
-    logger.info(f"Received render request {request_id} for file {filename}")
+    logger.info(f"收到渲染请求 {request_id} 文件名: {filename}")
 
     # 1. 保存上传的文件
     input_filename = f"{request_id}_{filename}"
     input_path = TEMP_DIR / input_filename
+    # 预期的相关文件路径
+    expected_output_path = input_path.with_suffix(".mp4")
+    expected_json_path = input_path.with_suffix(".json")
+
+    # 定义需要清理的文件列表
+    files_to_clean = [input_path, expected_output_path, expected_json_path]
 
     try:
         with input_path.open("wb") as buffer:
             shutil.copyfileobj(replay.file, buffer)
     except Exception as e:
-        logger.error(f"Failed to save upload file: {e}")
+        logger.error(f"保存上传文件失败: {e}")
         raise HTTPException(status_code=500, detail="Failed to save file")
-
-    # 2. 构建输出路径 (minimap_renderer 默认在同目录下生成 .mp4)
-    expected_output_path = input_path.with_suffix(".mp4")
 
     # 3. 执行渲染命令
     # 这里的命令假设 render 模块已安装在 Python 路径中
     cmd = f"{RENDER_CMD} --replay {input_path}"
-    logger.info(f"Executing: {cmd}")
+    logger.info(f"执行命令: {cmd}")
 
     try:
         process = await asyncio.create_subprocess_shell(
@@ -79,26 +115,26 @@ async def render_replay(
             stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=600)
         except asyncio.TimeoutError:
             process.kill()
-            cleanup_files([input_path])
+            cleanup_files(files_to_clean)
             raise HTTPException(status_code=504, detail="Rendering timed out")
 
         if process.returncode != 0:
             error_log = stderr.decode() + stdout.decode()
-            logger.error(f"Render failed: {error_log}")
-            cleanup_files([input_path])
+            logger.error(f"渲染失败: {error_log}")
+            cleanup_files(files_to_clean)
             raise HTTPException(
                 status_code=500, detail=f"Render failed: {error_log[-500:]}"
             )
 
         if not expected_output_path.exists():
-            logger.error("Output video file not found")
-            cleanup_files([input_path])
+            logger.error("未找到输出视频文件")
+            cleanup_files(files_to_clean)
             raise HTTPException(status_code=500, detail="Output video file missing")
 
-        logger.info(f"Render success: {expected_output_path}")
+        logger.info(f"渲染成功: {expected_output_path}")
 
         # 4. 返回视频文件，并在发送后清理
-        background_tasks.add_task(cleanup_files, [input_path, expected_output_path])
+        background_tasks.add_task(cleanup_files, files_to_clean)
 
         return FileResponse(
             path=expected_output_path,
@@ -109,6 +145,6 @@ async def render_replay(
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception("Unexpected error during rendering")
-        cleanup_files([input_path, expected_output_path])
+        logger.exception("渲染过程中发生意外错误")
+        cleanup_files(files_to_clean)
         raise HTTPException(status_code=500, detail=str(e))
