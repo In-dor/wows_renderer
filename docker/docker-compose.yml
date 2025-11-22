@@ -8,6 +8,8 @@ services:
     restart: unless-stopped
     ports:
       - "8089:8000"
+    environment:
+      - TZ=Asia/Shanghai
     # 如果需要限制资源，可以取消注释以下内容
     # deploy:
     #   resources:
