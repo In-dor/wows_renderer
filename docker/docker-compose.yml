@@ -4,6 +4,7 @@ services:
   wows-renderer:
     container_name: wows-renderer-service
     image: wows-renderer-service:latest
+    build: .
     restart: unless-stopped
     ports:
       - "8089:8000"
