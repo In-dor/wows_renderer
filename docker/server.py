@@ -1,4 +1,5 @@
 import os
+import time
 import uuid
 import shutil
 import asyncio
@@ -24,16 +25,23 @@ class ColoredFormatter(logging.Formatter):
     datefmt = "%Y-%m-%d %H:%M:%S"
     fmt = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
-    FORMATS = {
-        logging.DEBUG: grey + fmt + reset,
-        logging.INFO: green + fmt + reset,
-        logging.WARNING: yellow + fmt + reset,
-        logging.ERROR: red + fmt + reset,
-        logging.CRITICAL: bold_red + fmt + reset,
+    COLORS = {
+        logging.DEBUG: grey,
+        logging.INFO: green,
+        logging.WARNING: yellow,
+        logging.ERROR: red,
+        logging.CRITICAL: bold_red,
     }
 
     def format(self, record):
-        log_fmt = self.FORMATS.get(record.levelno)
+        # 手动格式化时间，确保精确到秒且不包含毫秒
+        date_format = self.datefmt if self.datefmt else "%Y-%m-%d %H:%M:%S"
+        record.asctime = time.strftime(date_format, time.localtime(record.created))
+
+        color = self.COLORS.get(record.levelno, self.reset)
+        # 仅给时间和等级加颜色，消息内容不加颜色
+        log_fmt = f"{color}%(asctime)s{self.reset} - %(name)s - {color}%(levelname)s{self.reset} - %(message)s"
+
         formatter = logging.Formatter(log_fmt, datefmt=self.datefmt)
         return formatter.format(record)
 
@@ -86,12 +94,12 @@ async def render_replay(
     # 1. 保存上传的文件
     input_filename = f"{request_id}_{filename}"
     input_path = TEMP_DIR / input_filename
-    # 预期的相关文件路径
+    # 预期的输出视频路径
     expected_output_path = input_path.with_suffix(".mp4")
-    expected_json_path = input_path.with_suffix(".json")
 
-    # 定义需要清理的文件列表
-    files_to_clean = [input_path, expected_output_path, expected_json_path]
+    def get_cleanup_files():
+        """动态查找所有以 request_id 开头的相关文件"""
+        return list(TEMP_DIR.glob(f"{request_id}*"))
 
     try:
         with input_path.open("wb") as buffer:
@@ -115,26 +123,27 @@ async def render_replay(
             stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=600)
         except asyncio.TimeoutError:
             process.kill()
-            cleanup_files(files_to_clean)
+            cleanup_files(get_cleanup_files())
             raise HTTPException(status_code=504, detail="Rendering timed out")
 
         if process.returncode != 0:
             error_log = stderr.decode() + stdout.decode()
             logger.error(f"渲染失败: {error_log}")
-            cleanup_files(files_to_clean)
+            cleanup_files(get_cleanup_files())
             raise HTTPException(
                 status_code=500, detail=f"Render failed: {error_log[-500:]}"
             )
 
         if not expected_output_path.exists():
             logger.error("未找到输出视频文件")
-            cleanup_files(files_to_clean)
+            cleanup_files(get_cleanup_files())
             raise HTTPException(status_code=500, detail="Output video file missing")
 
         logger.info(f"渲染成功: {expected_output_path}")
 
         # 4. 返回视频文件，并在发送后清理
-        background_tasks.add_task(cleanup_files, files_to_clean)
+        # 在添加任务时立即执行 glob 查找当前存在的文件
+        background_tasks.add_task(cleanup_files, get_cleanup_files())
 
         return FileResponse(
             path=expected_output_path,
@@ -146,5 +155,5 @@ async def render_replay(
         raise
     except Exception as e:
         logger.exception("渲染过程中发生意外错误")
-        cleanup_files(files_to_clean)
+        cleanup_files(get_cleanup_files())
         raise HTTPException(status_code=500, detail=str(e))
