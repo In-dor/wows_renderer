@@ -73,7 +73,10 @@ async def handle_replay_file(bot: Bot, event: GroupMessageEvent, matcher: Matche
             logger.info(f"渲染成功: {file_name}")
             await matcher.send(f"✅ 「{file_name}」渲染完成！正在发送视频...")
             try:
-                await matcher.send(MessageSegment.video(video_file_path))
+                # 读取视频内容为 bytes 发送，解决 Docker 容器间路径不互通的问题
+                async with aiofiles.open(video_file_path, "rb") as f:
+                    video_data = await f.read()
+                await matcher.send(MessageSegment.video(video_data))
             except Exception as e:
                 logger.error(f"发送视频失败: {e}")
                 await matcher.finish(
