@@ -36,13 +36,14 @@ class ColoredFormatter(logging.Formatter):
     def format(self, record):
         # 手动格式化时间，确保精确到秒且不包含毫秒
         date_format = self.datefmt if self.datefmt else "%Y-%m-%d %H:%M:%S"
-        record.asctime = time.strftime(date_format, time.localtime(record.created))
+        current_time = time.strftime(date_format, time.localtime(record.created))
 
         color = self.COLORS.get(record.levelno, self.reset)
         # 仅给时间和等级加颜色，消息内容不加颜色
-        log_fmt = f"{color}%(asctime)s{self.reset} - %(name)s - {color}%(levelname)s{self.reset} - %(message)s"
+        # 直接将时间字符串嵌入格式模板中，避免 logging 模块自动添加毫秒
+        log_fmt = f"{color}{current_time}{self.reset} - %(name)s - {color}%(levelname)s{self.reset} - %(message)s"
 
-        formatter = logging.Formatter(log_fmt, datefmt=self.datefmt)
+        formatter = logging.Formatter(log_fmt)
         return formatter.format(record)
 
 
