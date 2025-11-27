@@ -2,6 +2,7 @@ import os
 import time
 import uuid
 import shutil
+import shlex
 import asyncio
 import logging
 from pathlib import Path
@@ -111,7 +112,8 @@ async def render_replay(
 
     # 3. 执行渲染命令
     # 这里的命令假设 render 模块已安装在 Python 路径中
-    cmd = f"{RENDER_CMD} --replay {input_path}"
+    # 使用 shlex.quote 处理路径中的特殊字符（如括号、空格）
+    cmd = f"{RENDER_CMD} --replay {shlex.quote(str(input_path))}"
     logger.info(f"执行命令: {cmd}")
 
     try:
