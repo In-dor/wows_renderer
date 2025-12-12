@@ -65,6 +65,12 @@ TEMP_DIR.mkdir(parents=True, exist_ok=True)
 # 渲染器命令 (Docker容器内直接使用安装好的模块)
 RENDER_CMD = "python -m render"
 
+# 并发限制
+MAX_CONCURRENT_RENDERS = int(os.getenv("MAX_CONCURRENT_RENDERS", 0))
+render_semaphore = (
+    asyncio.Semaphore(MAX_CONCURRENT_RENDERS) if MAX_CONCURRENT_RENDERS > 0 else None
+)
+
 
 def cleanup_files(files: list[Path]):
     """清理临时文件"""
@@ -93,70 +99,79 @@ async def render_replay(
     request_id = str(uuid.uuid4())
     logger.info(f"收到渲染请求 {request_id} 文件名: {filename}")
 
-    # 1. 保存上传的文件
-    input_filename = f"{request_id}_{filename}"
-    input_path = TEMP_DIR / input_filename
-    # 预期的输出视频路径
-    expected_output_path = input_path.with_suffix(".mp4")
+    async def _perform_render():
+        # 1. 保存上传的文件
+        input_filename = f"{request_id}_{filename}"
+        input_path = TEMP_DIR / input_filename
+        # 预期的输出视频路径
+        expected_output_path = input_path.with_suffix(".mp4")
 
-    def get_cleanup_files():
-        """动态查找所有以 request_id 开头的相关文件"""
-        return list(TEMP_DIR.glob(f"{request_id}*"))
+        def get_cleanup_files():
+            """动态查找所有以 request_id 开头的相关文件"""
+            return list(TEMP_DIR.glob(f"{request_id}*"))
 
-    try:
-        with input_path.open("wb") as buffer:
-            shutil.copyfileobj(replay.file, buffer)
-    except Exception as e:
-        logger.error(f"保存上传文件失败: {e}")
-        raise HTTPException(status_code=500, detail="Failed to save file")
-
-    # 3. 执行渲染命令
-    # 这里的命令假设 render 模块已安装在 Python 路径中
-    # 使用 shlex.quote 处理路径中的特殊字符（如括号、空格）
-    cmd = f"{RENDER_CMD} --replay {shlex.quote(str(input_path))}"
-    logger.info(f"执行命令: {cmd}")
-
-    try:
-        process = await asyncio.create_subprocess_shell(
-            cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-        )
-
-        # 设置超时时间 (例如 10 分钟)
         try:
-            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=600)
-        except asyncio.TimeoutError:
-            process.kill()
-            cleanup_files(get_cleanup_files())
-            raise HTTPException(status_code=504, detail="Rendering timed out")
+            with input_path.open("wb") as buffer:
+                shutil.copyfileobj(replay.file, buffer)
+        except Exception as e:
+            logger.error(f"保存上传文件失败: {e}")
+            raise HTTPException(status_code=500, detail="Failed to save file")
 
-        if process.returncode != 0:
-            error_log = stderr.decode() + stdout.decode()
-            logger.error(f"渲染失败: {error_log}")
-            cleanup_files(get_cleanup_files())
-            raise HTTPException(
-                status_code=500, detail=f"Render failed: {error_log[-500:]}"
+        # 3. 执行渲染命令
+        # 这里的命令假设 render 模块已安装在 Python 路径中
+        # 使用 shlex.quote 处理路径中的特殊字符（如括号、空格）
+        cmd = f"{RENDER_CMD} --replay {shlex.quote(str(input_path))}"
+        logger.info(f"执行命令: {cmd}")
+
+        try:
+            process = await asyncio.create_subprocess_shell(
+                cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
             )
 
-        if not expected_output_path.exists():
-            logger.error("未找到输出视频文件")
+            # 设置超时时间 (例如 10 分钟)
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    process.communicate(), timeout=600
+                )
+            except asyncio.TimeoutError:
+                process.kill()
+                cleanup_files(get_cleanup_files())
+                raise HTTPException(status_code=504, detail="Rendering timed out")
+
+            if process.returncode != 0:
+                error_log = stderr.decode() + stdout.decode()
+                logger.error(f"渲染失败: {error_log}")
+                cleanup_files(get_cleanup_files())
+                raise HTTPException(
+                    status_code=500, detail=f"Render failed: {error_log[-500:]}"
+                )
+
+            if not expected_output_path.exists():
+                logger.error("未找到输出视频文件")
+                cleanup_files(get_cleanup_files())
+                raise HTTPException(status_code=500, detail="Output video file missing")
+
+            logger.info(f"渲染成功: {expected_output_path}")
+
+            # 4. 返回视频文件，并在发送后清理
+            # 在添加任务时立即执行 glob 查找当前存在的文件
+            background_tasks.add_task(cleanup_files, get_cleanup_files())
+
+            return FileResponse(
+                path=expected_output_path,
+                filename=f"{Path(filename).stem}.mp4",
+                media_type="video/mp4",
+            )
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.exception("渲染过程中发生意外错误")
             cleanup_files(get_cleanup_files())
-            raise HTTPException(status_code=500, detail="Output video file missing")
+            raise HTTPException(status_code=500, detail=str(e))
 
-        logger.info(f"渲染成功: {expected_output_path}")
-
-        # 4. 返回视频文件，并在发送后清理
-        # 在添加任务时立即执行 glob 查找当前存在的文件
-        background_tasks.add_task(cleanup_files, get_cleanup_files())
-
-        return FileResponse(
-            path=expected_output_path,
-            filename=f"{Path(filename).stem}.mp4",
-            media_type="video/mp4",
-        )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("渲染过程中发生意外错误")
-        cleanup_files(get_cleanup_files())
-        raise HTTPException(status_code=500, detail=str(e))
+    if render_semaphore:
+        async with render_semaphore:
+            return await _perform_render()
+    else:
+        return await _perform_render()

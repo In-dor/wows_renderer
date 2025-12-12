@@ -26,6 +26,7 @@ class Config(BaseModel):
     # 渲染相关设置
     render_timeout: int = 600  # 渲染超时时间(秒)
     enable_cleanup: bool = True  # 是否自动清理临时文件
+    max_concurrent_renders: int = 0  # 最大同时渲染数，0为不限制
 
     @validator("renderer_project_path")
     def renderer_path_must_exist(cls, v):

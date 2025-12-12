@@ -9,6 +9,13 @@ from nonebot.log import logger
 
 from .config import plugin_config
 
+# 并发限制信号量
+render_semaphore = (
+    asyncio.Semaphore(plugin_config.max_concurrent_renders)
+    if plugin_config.max_concurrent_renders > 0
+    else None
+)
+
 # 根据配置构建路径 (仅在本地模式下使用)
 RENDERER_PROJECT_PATH = (
     Path(plugin_config.renderer_project_path)
@@ -32,18 +39,12 @@ if not plugin_config.renderer_api_endpoint and RENDERER_PROJECT_PATH:
             PYTHON_EXECUTABLE = RENDERER_PROJECT_PATH / "venv" / "bin" / "python"
 
 
-async def render_replay(replay_path: Path, output_path: Path) -> tuple[bool, str, str]:
+async def _do_render_replay(
+    replay_path: Path, output_path: Path
+) -> tuple[bool, str, str]:
     """
-    使用 minimap_renderer 处理回放文件 (支持本地或远程调用)
-
-    Args:
-        replay_path: 回放文件路径
-        output_path: 输出视频路径
-
-    Returns:
-        (成功标志, 消息, 日志)
+    使用 minimap_renderer 处理回放文件 (内部函数)
     """
-
     # 1. 远程渲染模式
     if plugin_config.renderer_api_endpoint:
         logger.info(f"使用远程渲染服务: {plugin_config.renderer_api_endpoint}")
@@ -128,3 +129,21 @@ async def render_replay(replay_path: Path, output_path: Path) -> tuple[bool, str
     except Exception as e:
         logger.exception(f"渲染过程异常: {e}")
         return False, f"渲染过程发生异常: {e}", str(e)
+
+
+async def render_replay(replay_path: Path, output_path: Path) -> tuple[bool, str, str]:
+    """
+    使用 minimap_renderer 处理回放文件 (支持本地或远程调用)
+
+    Args:
+        replay_path: 回放文件路径
+        output_path: 输出视频路径
+
+    Returns:
+        (成功标志, 消息, 日志)
+    """
+    if render_semaphore:
+        async with render_semaphore:
+            return await _do_render_replay(replay_path, output_path)
+    else:
+        return await _do_render_replay(replay_path, output_path)
