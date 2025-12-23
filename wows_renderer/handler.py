@@ -65,7 +65,6 @@ async def handle_replay_file(bot: Bot, event: GroupMessageEvent, matcher: Matche
             await matcher.finish("❌ 下载回放文件失败，请稍后再试")
 
         # 3. 渲染视频
-        await matcher.send("📥 文件下载完成，正在调用 minimap_renderer 进行渲染...")
         success, message, log = await render_replay(replay_file_path, video_file_path)
 
         # 4. 处理渲染结果
