@@ -16,6 +16,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # 安装 minimap_renderer
 # 使用 --upgrade --force-reinstall 确保拉取最新版
+ARG CACHEBUST=1
 RUN pip install --no-cache-dir --upgrade --force-reinstall git+https://github.com/In-dor/minimap_renderer.git
 
 # 复制服务代码

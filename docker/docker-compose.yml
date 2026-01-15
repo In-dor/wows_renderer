@@ -4,7 +4,10 @@ services:
   wows-renderer:
     container_name: wows-renderer-service
     image: wows-renderer-service:latest
-    build: .
+    build:
+      context: .
+      args:
+        CACHEBUST: ${CACHEBUST:-1}
     restart: unless-stopped
     ports:
       - "8089:8000"
