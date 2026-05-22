@@ -3,7 +3,12 @@ FROM python:3.10-slim
 WORKDIR /app
 
 # 安装系统依赖 (OpenCV, Matplotlib 等需要)
+# 添加重试和 --fix-missing 以应对代理/网络不稳定导致的 502 错误
 RUN apt-get update && apt-get install -y \
+    -o Acquire::Retries=3 \
+    -o Acquire::http::Timeout=30 \
+    -o Acquire::https::Timeout=30 \
+    --fix-missing \
     git \
     ffmpeg \
     libsm6 \
@@ -16,7 +21,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # 安装 minimap_renderer
 # 使用 --upgrade --force-reinstall 确保拉取最新版
-ARG CACHEBUST=1
+ARG CACHEBUST=12
 RUN pip install --no-cache-dir --upgrade --force-reinstall git+https://github.com/In-dor/minimap_renderer.git
 
 # 复制服务代码
