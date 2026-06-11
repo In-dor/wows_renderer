@@ -3,7 +3,7 @@
 import nonebot
 from pathlib import Path
 from typing import Optional
-from pydantic import BaseModel, validator, root_validator
+from pydantic import BaseModel, Field, model_validator
 
 
 class Config(BaseModel):
@@ -20,42 +20,31 @@ class Config(BaseModel):
     renderer_api_endpoint: Optional[str] = None
 
     # 缓存与输出路径
-    wows_render_temp_path: Path = Path("cache/wows_render/temp")
-    wows_render_output_path: Path = Path("cache/wows_render/output")
+    wows_render_temp_path: Path = Field(default=Path("cache/wows_render/temp"))
+    wows_render_output_path: Path = Field(default=Path("cache/wows_render/output"))
 
     # 渲染相关设置
     render_timeout: int = 600  # 渲染超时时间(秒)
     enable_cleanup: bool = True  # 是否自动清理临时文件
     max_concurrent_renders: int = 0  # 最大同时渲染数，0为不限制
 
-    @validator("renderer_project_path")
-    def renderer_path_must_exist(cls, v):
-        if v and not v.exists():
-            raise ValueError(f"渲染器路径不存在: {v}")
-        return v
+    @model_validator(mode="after")
+    def check_paths_and_create(self) -> 'Config':
+        if self.renderer_project_path and not self.renderer_project_path.exists():
+            raise ValueError(f"渲染器路径不存在: {self.renderer_project_path}")
+            
+        if self.renderer_python_path and not self.renderer_python_path.exists():
+            raise ValueError(f"Python解释器路径不存在: {self.renderer_python_path}")
 
-    @root_validator(skip_on_failure=True)
-    def check_render_config(cls, values):
-        api_endpoint = values.get("renderer_api_endpoint")
-        project_path = values.get("renderer_project_path")
-
-        if not api_endpoint and not project_path:
+        if not self.renderer_api_endpoint and not self.renderer_project_path:
             raise ValueError(
                 "必须配置 renderer_project_path (本地渲染) 或 renderer_api_endpoint (远程渲染)"
             )
-        return values
 
-    @validator("renderer_python_path")
-    def python_path_must_exist(cls, v):
-        if v and not v.exists():
-            raise ValueError(f"Python解释器路径不存在: {v}")
-        return v
-
-    @validator("wows_render_temp_path", "wows_render_output_path")
-    def create_path(cls, v):
-        v.mkdir(parents=True, exist_ok=True)
-        return v
+        self.wows_render_temp_path.mkdir(parents=True, exist_ok=True)
+        self.wows_render_output_path.mkdir(parents=True, exist_ok=True)
+        return self
 
 
 # 创建配置实例
-plugin_config = Config.parse_obj(nonebot.get_driver().config.dict())
+plugin_config = Config.model_validate(nonebot.get_driver().config.model_dump())

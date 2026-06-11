@@ -1,8 +1,8 @@
 """工具函数模块"""
 
+import os
+import asyncio
 from pathlib import Path
-import aiofiles
-import aiofiles.os
 from nonebot.log import logger
 
 from .config import plugin_config
@@ -16,8 +16,8 @@ async def cleanup_files(file_paths: list[Path]) -> None:
 
     for path in file_paths:
         try:
-            if await aiofiles.os.path.exists(path):
-                await aiofiles.os.remove(path)
+            if path.exists():
+                await asyncio.to_thread(os.remove, path)
                 logger.debug(f"已异步删除临时文件: {path}")
         except Exception as e:
             logger.error(f"异步删除文件失败 {path}: {e}")

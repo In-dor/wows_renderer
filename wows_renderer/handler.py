@@ -60,8 +60,14 @@ async def handle_replay_file(bot: Bot, event: GroupMessageEvent, matcher: Matche
                 async with aiofiles.open(replay_file_path, "wb") as f:
                     await f.write(resp.content)
             logger.info(f"已异步下载回放文件: {replay_file_path}")
+        except httpx.TimeoutException:
+            logger.error(f"下载文件超时: {file_url}")
+            await matcher.finish("❌ 下载回放文件超时，请稍后再试")
+        except httpx.HTTPStatusError as e:
+            logger.error(f"下载文件失败，HTTP 状态码: {e.response.status_code}")
+            await matcher.finish(f"❌ 下载回放文件失败 ({e.response.status_code})")
         except Exception as e:
-            logger.error(f"下载文件失败: {e}")
+            logger.error(f"下载文件发生未知错误: {e}")
             await matcher.finish("❌ 下载回放文件失败，请稍后再试")
 
         # 3. 渲染视频

@@ -96,12 +96,22 @@ async def render_replay(
     if not filename or not filename.endswith(".wowsreplay"):
         raise HTTPException(status_code=400, detail="Invalid file extension")
 
-    request_id = str(uuid.uuid4())
-    logger.info(f"收到渲染请求 {request_id} 文件名: {filename}")
+    # 尝试从文件名中提取唯一的ID（如果传入的文件名已经是 UUID_filename 格式）
+    filename_base = os.path.basename(filename)
+    if "_" in filename_base and len(filename_base.split("_")[0]) >= 32:
+         parts = filename_base.split("_", 1)
+         request_id = parts[0]
+         original_filename = parts[1]
+    else:
+         request_id = str(uuid.uuid4())
+         original_filename = filename_base
+
+    logger.info(f"收到渲染请求 {request_id} 文件名: {original_filename}")
 
     async def _perform_render():
         # 1. 保存上传的文件
-        input_filename = f"{request_id}_{filename}"
+        # 优化：直接使用原有的文件名（去掉了远端生成的 request_id）或者由 Bot 传递 request_id
+        input_filename = f"{request_id}_{original_filename}"
         input_path = TEMP_DIR / input_filename
         # 预期的输出视频路径
         expected_output_path = input_path.with_suffix(".mp4")
@@ -128,10 +138,11 @@ async def render_replay(
                 cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
             )
 
-            # 设置超时时间 (例如 10 分钟)
+            # 设置超时时间 (修改为从环境变量获取，默认10分钟，避免直接写死)
+            render_timeout = int(os.getenv("RENDER_TIMEOUT", 600))
             try:
                 stdout, stderr = await asyncio.wait_for(
-                    process.communicate(), timeout=600
+                    process.communicate(), timeout=render_timeout
                 )
             except asyncio.TimeoutError:
                 process.kill()
@@ -159,7 +170,7 @@ async def render_replay(
 
             return FileResponse(
                 path=expected_output_path,
-                filename=f"{Path(filename).stem}.mp4",
+                filename=f"{Path(original_filename).stem}.mp4",
                 media_type="video/mp4",
             )
 

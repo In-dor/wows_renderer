@@ -1,8 +1,8 @@
 """渲染器交互模块 - 专用于 minimap_renderer"""
 
 import sys
+import os
 import asyncio
-import aiofiles.os
 from pathlib import Path
 import httpx
 from nonebot.log import logger
@@ -118,7 +118,7 @@ async def _do_render_replay(
         if process.returncode == 0:
             if original_video_path.exists():
                 logger.info(f"渲染成功，原始视频位于: {original_video_path}")
-                await aiofiles.os.rename(original_video_path, output_path)
+                await asyncio.to_thread(os.rename, original_video_path, output_path)
                 logger.info(f"已异步将视频移动到目标路径: {output_path}")
                 return True, "渲染成功", output_log
             else:
