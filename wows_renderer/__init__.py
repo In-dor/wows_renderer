@@ -9,14 +9,17 @@ from nonebot.rule import Rule
 from nonebot.adapters.onebot.v11 import GroupMessageEvent
 
 from .handler import handle_replay_file
-from .config import plugin_config  # 导入配置以确保路径被创建
 
 
 # 规则：只响应 .wowsreplay 文件
 def is_wows_replay() -> Rule:
     async def check(event: GroupMessageEvent) -> bool:
+        if not isinstance(event, GroupMessageEvent):
+            return False
         for seg in event.message:
-            if seg.type == "file" and seg.data.get("file", "").endswith(".wowsreplay"):
+            if seg.type == "file" and seg.data.get("file", "").lower().endswith(
+                ".wowsreplay"
+            ):
                 return True
         return False
 

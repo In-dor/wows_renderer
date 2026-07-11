@@ -20,12 +20,14 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # 安装 minimap_renderer
-# 使用 --upgrade --force-reinstall 确保拉取最新版
-ARG CACHEBUST=12
-RUN pip install --no-cache-dir --upgrade --force-reinstall git+https://github.com/In-dor/minimap_renderer.git
+ARG MINIMAP_RENDERER_COMMIT=03027639d1308e523ff0a61e9014d4c6bb352ba2
+RUN pip install --no-cache-dir "git+https://github.com/In-dor/minimap_renderer.git@${MINIMAP_RENDERER_COMMIT}"
 
 # 复制服务代码
 COPY server.py .
+
+RUN useradd --create-home --uid 10001 renderer
+USER renderer
 
 # 暴露端口
 EXPOSE 8000

@@ -1,0 +1,114 @@
+import asyncio
+from io import BytesIO
+from pathlib import Path
+
+import pytest
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, UploadFile
+from fastapi.testclient import TestClient
+
+from docker import server
+
+
+def test_body_limit_runs_before_endpoint():
+    app = FastAPI()
+    app.add_middleware(server.MaxBodySizeMiddleware, max_bytes=5)
+
+    @app.post("/render")
+    async def endpoint(request: Request):
+        await request.body()
+        return {"status": "unexpected"}
+
+    response = TestClient(app).post(
+        "/render", content=(chunk for chunk in (b"too-", b"large"))
+    )
+
+    assert response.status_code == 413
+
+
+def test_verify_token(monkeypatch):
+    monkeypatch.setattr(server, "API_TOKEN", "expected-token")
+
+    with pytest.raises(HTTPException) as exc_info:
+        server.verify_token("Bearer wrong-token")
+
+    assert exc_info.value.status_code == 401
+    server.verify_token("Bearer expected-token")
+
+
+@pytest.mark.asyncio
+async def test_render_uses_private_request_directory(monkeypatch, tmp_path: Path):
+    request_id = "6b050938-d99c-4a85-86c7-6238a1278b91"
+    monkeypatch.setattr(server, "TEMP_DIR", tmp_path)
+    monkeypatch.setattr(server.uuid, "uuid4", lambda: request_id)
+    monkeypatch.setattr(server, "API_TOKEN", None)
+
+    captured = {}
+
+    class Process:
+        returncode = None
+        pid = 42
+
+        async def wait(self):
+            Path(captured["command"][-1]).with_suffix(".mp4").write_bytes(b"video")
+            self.returncode = 0
+
+    async def create_process(*command, **_):
+        captured["command"] = command
+        return Process()
+
+    monkeypatch.setattr(server.asyncio, "create_subprocess_exec", create_process)
+    replay = UploadFile(
+        file=BytesIO(b"replay-data"), filename="client-id_battle.wowsreplay"
+    )
+    background_tasks = BackgroundTasks()
+
+    response = await server.render_replay(
+        background_tasks,
+        replay,
+        authorization=None,
+        content_length=None,
+    )
+
+    request_dir = tmp_path / request_id
+    assert Path(response.path) == request_dir / "input.mp4"
+    assert captured["command"][-1] == str(request_dir / "input.wowsreplay")
+    assert (request_dir / "input.wowsreplay").read_bytes() == b"replay-data"
+
+    await background_tasks()
+    assert not request_dir.exists()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_render_terminates_and_cleans(monkeypatch, tmp_path: Path):
+    request_id = "2f3285fb-feb8-458a-a998-fd4fe51e041c"
+    monkeypatch.setattr(server, "TEMP_DIR", tmp_path)
+    monkeypatch.setattr(server.uuid, "uuid4", lambda: request_id)
+    monkeypatch.setattr(server, "API_TOKEN", None)
+
+    class Process:
+        returncode = None
+        pid = 42
+
+        async def wait(self):
+            raise asyncio.CancelledError
+
+    async def create_process(*_args, **_kwargs):
+        return Process()
+
+    terminated = []
+
+    async def terminate(process):
+        terminated.append(process.pid)
+        process.returncode = -9
+
+    monkeypatch.setattr(server.asyncio, "create_subprocess_exec", create_process)
+    monkeypatch.setattr(server, "terminate_process_tree", terminate)
+    replay = UploadFile(file=BytesIO(b"replay-data"), filename="battle.wowsreplay")
+
+    with pytest.raises(asyncio.CancelledError):
+        await server.render_replay(
+            BackgroundTasks(), replay, authorization=None, content_length=None
+        )
+
+    assert terminated == [42]
+    assert not (tmp_path / request_id).exists()

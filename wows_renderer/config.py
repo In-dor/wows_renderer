@@ -3,7 +3,7 @@
 import nonebot
 from pathlib import Path
 from typing import Optional
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class Config(BaseModel):
@@ -18,21 +18,29 @@ class Config(BaseModel):
 
     # 远程渲染 API 地址 (可选，配置后将优先使用 HTTP 调用)
     renderer_api_endpoint: Optional[str] = None
+    renderer_api_token: Optional[str] = None
 
     # 缓存与输出路径
     wows_render_temp_path: Path = Field(default=Path("cache/wows_render/temp"))
     wows_render_output_path: Path = Field(default=Path("cache/wows_render/output"))
 
     # 渲染相关设置
-    render_timeout: int = 600  # 渲染超时时间(秒)
+    render_timeout: int = Field(default=600, gt=0)  # 渲染超时时间(秒)
     enable_cleanup: bool = True  # 是否自动清理临时文件
-    max_concurrent_renders: int = 0  # 最大同时渲染数，0为不限制
+    max_concurrent_renders: int = Field(default=0, ge=0)  # 0为不限制
+    max_replay_size_mb: int = Field(default=100, gt=0)
+    max_video_size_mb: int = Field(default=300, gt=0)
+
+    @field_validator("renderer_api_endpoint")
+    @classmethod
+    def normalize_api_endpoint(cls, value: Optional[str]) -> Optional[str]:
+        return value.rstrip("/") if value else None
 
     @model_validator(mode="after")
-    def check_paths_and_create(self) -> 'Config':
+    def check_paths_and_create(self) -> "Config":
         if self.renderer_project_path and not self.renderer_project_path.exists():
             raise ValueError(f"渲染器路径不存在: {self.renderer_project_path}")
-            
+
         if self.renderer_python_path and not self.renderer_python_path.exists():
             raise ValueError(f"Python解释器路径不存在: {self.renderer_python_path}")
 

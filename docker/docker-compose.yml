@@ -1,22 +1,23 @@
-version: '3.8'
-
 services:
   wows-renderer:
     container_name: wows-renderer-service
     image: wows-renderer-service:latest
     build:
       context: .
-      args:
-        CACHEBUST: ${CACHEBUST:-1}
     restart: unless-stopped
     ports:
-      - "8089:8000"
+      - "127.0.0.1:8089:8000"
     environment:
-      - TZ=Asia/Shanghai
-      - MAX_CONCURRENT_RENDERS=2
-    # 如果需要限制资源，可以取消注释以下内容
-    # deploy:
-    #   resources:
-    #     limits:
-    #       cpus: '2'
-    #       memory: 4G
+      TZ: Asia/Shanghai
+      MAX_CONCURRENT_RENDERS: ${MAX_CONCURRENT_RENDERS:-2}
+      RENDER_TIMEOUT: ${RENDER_TIMEOUT:-600}
+      MAX_REPLAY_SIZE_MB: ${MAX_REPLAY_SIZE_MB:-100}
+      RENDERER_API_TOKEN: ${RENDERER_API_TOKEN:-}
+    cpus: ${RENDERER_CPU_LIMIT:-2}
+    mem_limit: ${RENDERER_MEMORY_LIMIT:-4g}
+    pids_limit: 256
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

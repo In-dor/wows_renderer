@@ -1,15 +1,25 @@
 import os
+import secrets
+import signal
+import sys
 import time
 import uuid
 import shutil
-import shlex
 import asyncio
 import logging
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
+from fastapi import (
+    BackgroundTasks,
+    FastAPI,
+    File,
+    Header,
+    HTTPException,
+    UploadFile,
+)
 from fastapi.responses import FileResponse
+from starlette.responses import JSONResponse
 
 
 # 配置日志
@@ -59,28 +69,136 @@ if not logger.handlers:
 app = FastAPI(title="WoWs Minimap Renderer Service")
 
 # 临时文件目录
-TEMP_DIR = Path("/tmp/wows_renderer")
+TEMP_DIR = Path(os.getenv("WOWS_RENDER_TEMP_DIR", "/tmp/wows_renderer"))
 TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
-# 渲染器命令 (Docker容器内直接使用安装好的模块)
-RENDER_CMD = "python -m render"
+
+def positive_int_env(name: str, default: int) -> int:
+    try:
+        value = int(os.getenv(name, default))
+    except ValueError as exc:
+        raise RuntimeError(f"{name} must be an integer") from exc
+    if value <= 0:
+        raise RuntimeError(f"{name} must be greater than zero")
+    return value
+
 
 # 并发限制
-MAX_CONCURRENT_RENDERS = int(os.getenv("MAX_CONCURRENT_RENDERS", 0))
+try:
+    MAX_CONCURRENT_RENDERS = int(os.getenv("MAX_CONCURRENT_RENDERS", 0))
+except ValueError as exc:
+    raise RuntimeError("MAX_CONCURRENT_RENDERS must be an integer") from exc
+if MAX_CONCURRENT_RENDERS < 0:
+    raise RuntimeError("MAX_CONCURRENT_RENDERS cannot be negative")
+
+RENDER_TIMEOUT = positive_int_env("RENDER_TIMEOUT", 600)
+MAX_UPLOAD_BYTES = positive_int_env("MAX_REPLAY_SIZE_MB", 100) * 1024 * 1024
+API_TOKEN = os.getenv("RENDERER_API_TOKEN")
 render_semaphore = (
     asyncio.Semaphore(MAX_CONCURRENT_RENDERS) if MAX_CONCURRENT_RENDERS > 0 else None
 )
 
 
-def cleanup_files(files: list[Path]):
-    """清理临时文件"""
-    for file_path in files:
+class RequestBodyTooLarge(Exception):
+    pass
+
+
+class MaxBodySizeMiddleware:
+    """Reject oversized request bodies before multipart parsing."""
+
+    def __init__(self, app, max_bytes: int):
+        self.app = app
+        self.max_bytes = max_bytes
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or scope.get("path") != "/render":
+            await self.app(scope, receive, send)
+            return
+
+        headers = dict(scope.get("headers", []))
+        content_length = headers.get(b"content-length")
+        if content_length and int(content_length) > self.max_bytes:
+            await JSONResponse({"detail": "Replay file is too large"}, status_code=413)(
+                scope, receive, send
+            )
+            return
+
+        received = 0
+
+        async def limited_receive():
+            nonlocal received
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > self.max_bytes:
+                    raise RequestBodyTooLarge
+            return message
+
         try:
-            if file_path.exists():
-                os.remove(file_path)
-                logger.info(f"已删除临时文件: {file_path}")
-        except Exception as e:
-            logger.error(f"删除文件失败 {file_path}: {e}")
+            await self.app(scope, limited_receive, send)
+        except RequestBodyTooLarge:
+            await JSONResponse({"detail": "Replay file is too large"}, status_code=413)(
+                scope, receive, send
+            )
+
+
+app.add_middleware(
+    MaxBodySizeMiddleware,
+    max_bytes=MAX_UPLOAD_BYTES + 1024 * 1024,
+)
+
+
+def cleanup_request_dir(request_dir: Path):
+    """Remove all files owned by one render request."""
+    try:
+        shutil.rmtree(request_dir, ignore_errors=False)
+        logger.info(f"已清理请求目录: {request_dir.name}")
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        logger.error(f"删除请求目录失败 {request_dir}: {e}")
+
+
+def read_log_tail(log_path: Path, limit: int = 4000) -> str:
+    with log_path.open("rb") as log_file:
+        log_file.seek(0, os.SEEK_END)
+        log_file.seek(max(0, log_file.tell() - limit))
+        return log_file.read().decode("utf-8", errors="replace")
+
+
+async def terminate_process_tree(process: asyncio.subprocess.Process) -> None:
+    if process.returncode is not None:
+        return
+    try:
+        if sys.platform == "win32":
+            killer = await asyncio.create_subprocess_exec(
+                "taskkill",
+                "/PID",
+                str(process.pid),
+                "/T",
+                "/F",
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await killer.wait()
+        else:
+            os.killpg(process.pid, signal.SIGKILL)
+    except (ProcessLookupError, OSError):
+        process.kill()
+    finally:
+        await process.wait()
+
+
+def verify_token(authorization: Optional[str]) -> None:
+    if not API_TOKEN:
+        return
+    scheme, _, token = (authorization or "").partition(" ")
+    if scheme.lower() != "bearer" or not secrets.compare_digest(token, API_TOKEN):
+        raise HTTPException(
+            status_code=401,
+            detail="Unauthorized",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
 
 @app.get("/")
@@ -90,96 +208,103 @@ async def health_check():
 
 @app.post("/render")
 async def render_replay(
-    background_tasks: BackgroundTasks, replay: UploadFile = File(...)
+    background_tasks: BackgroundTasks,
+    replay: UploadFile = File(...),
+    authorization: Optional[str] = Header(default=None),
+    content_length: Optional[int] = Header(default=None),
 ):
+    verify_token(authorization)
+    if content_length and content_length > MAX_UPLOAD_BYTES + 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Replay file is too large")
+
     filename = replay.filename
-    if not filename or not filename.endswith(".wowsreplay"):
+    if not filename or not filename.lower().endswith(".wowsreplay"):
         raise HTTPException(status_code=400, detail="Invalid file extension")
 
-    # 尝试从文件名中提取唯一的ID（如果传入的文件名已经是 UUID_filename 格式）
     filename_base = os.path.basename(filename)
-    if "_" in filename_base and len(filename_base.split("_")[0]) >= 32:
-         parts = filename_base.split("_", 1)
-         request_id = parts[0]
-         original_filename = parts[1]
-    else:
-         request_id = str(uuid.uuid4())
-         original_filename = filename_base
+    request_id = str(uuid.uuid4())
+    request_dir = TEMP_DIR / request_id
 
-    logger.info(f"收到渲染请求 {request_id} 文件名: {original_filename}")
+    logger.info(f"收到渲染请求 {request_id} 文件名: {filename_base}")
 
     async def _perform_render():
-        # 1. 保存上传的文件
-        # 优化：直接使用原有的文件名（去掉了远端生成的 request_id）或者由 Bot 传递 request_id
-        input_filename = f"{request_id}_{original_filename}"
-        input_path = TEMP_DIR / input_filename
-        # 预期的输出视频路径
+        request_dir.mkdir(mode=0o700)
+        input_path = request_dir / "input.wowsreplay"
         expected_output_path = input_path.with_suffix(".mp4")
-
-        def get_cleanup_files():
-            """动态查找所有以 request_id 开头的相关文件"""
-            return list(TEMP_DIR.glob(f"{request_id}*"))
+        log_path = request_dir / "renderer.log"
 
         try:
+            uploaded = 0
             with input_path.open("wb") as buffer:
-                shutil.copyfileobj(replay.file, buffer)
+                while chunk := await replay.read(1024 * 1024):
+                    uploaded += len(chunk)
+                    if uploaded > MAX_UPLOAD_BYTES:
+                        raise HTTPException(
+                            status_code=413, detail="Replay file is too large"
+                        )
+                    buffer.write(chunk)
+        except asyncio.CancelledError:
+            cleanup_request_dir(request_dir)
+            raise
         except Exception as e:
+            if isinstance(e, HTTPException):
+                cleanup_request_dir(request_dir)
+                raise
             logger.error(f"保存上传文件失败: {e}")
+            cleanup_request_dir(request_dir)
             raise HTTPException(status_code=500, detail="Failed to save file")
 
-        # 3. 执行渲染命令
-        # 这里的命令假设 render 模块已安装在 Python 路径中
-        # 使用 shlex.quote 处理路径中的特殊字符（如括号、空格）
-        cmd = f"{RENDER_CMD} --replay {shlex.quote(str(input_path))}"
-        logger.info(f"执行命令: {cmd}")
+        command = [sys.executable, "-m", "render", "--replay", str(input_path)]
+        logger.info(f"执行渲染请求: {request_id}")
 
         try:
-            process = await asyncio.create_subprocess_shell(
-                cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-            )
-
-            # 设置超时时间 (修改为从环境变量获取，默认10分钟，避免直接写死)
-            render_timeout = int(os.getenv("RENDER_TIMEOUT", 600))
-            try:
-                stdout, stderr = await asyncio.wait_for(
-                    process.communicate(), timeout=render_timeout
+            process = None
+            with log_path.open("wb") as log_file:
+                process = await asyncio.create_subprocess_exec(
+                    *command,
+                    stdout=log_file,
+                    stderr=asyncio.subprocess.STDOUT,
+                    start_new_session=True,
                 )
-            except asyncio.TimeoutError:
-                process.kill()
-                cleanup_files(get_cleanup_files())
-                raise HTTPException(status_code=504, detail="Rendering timed out")
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=RENDER_TIMEOUT)
+                except asyncio.TimeoutError:
+                    await terminate_process_tree(process)
+                    cleanup_request_dir(request_dir)
+                    logger.error(f"渲染超时: {request_id}")
+                    raise HTTPException(status_code=504, detail="Rendering timed out")
 
             if process.returncode != 0:
-                error_log = stderr.decode() + stdout.decode()
-                logger.error(f"渲染失败: {error_log}")
-                cleanup_files(get_cleanup_files())
-                raise HTTPException(
-                    status_code=500, detail=f"Render failed: {error_log[-500:]}"
-                )
+                error_log = await asyncio.to_thread(read_log_tail, log_path)
+                logger.error(f"渲染失败 {request_id}: {error_log}")
+                cleanup_request_dir(request_dir)
+                raise HTTPException(status_code=500, detail="Render failed")
 
             if not expected_output_path.exists():
-                logger.error("未找到输出视频文件")
-                cleanup_files(get_cleanup_files())
+                logger.error(f"未找到输出视频文件: {request_id}")
+                cleanup_request_dir(request_dir)
                 raise HTTPException(status_code=500, detail="Output video file missing")
 
-            logger.info(f"渲染成功: {expected_output_path}")
-
-            # 4. 返回视频文件，并在发送后清理
-            # 在添加任务时立即执行 glob 查找当前存在的文件
-            background_tasks.add_task(cleanup_files, get_cleanup_files())
+            logger.info(f"渲染成功: {request_id}")
+            background_tasks.add_task(cleanup_request_dir, request_dir)
 
             return FileResponse(
                 path=expected_output_path,
-                filename=f"{Path(original_filename).stem}.mp4",
+                filename=f"{Path(filename_base).stem}.mp4",
                 media_type="video/mp4",
             )
 
+        except asyncio.CancelledError:
+            if process and process.returncode is None:
+                await asyncio.shield(terminate_process_tree(process))
+            cleanup_request_dir(request_dir)
+            raise
         except HTTPException:
             raise
-        except Exception as e:
-            logger.exception("渲染过程中发生意外错误")
-            cleanup_files(get_cleanup_files())
-            raise HTTPException(status_code=500, detail=str(e))
+        except Exception:
+            logger.exception(f"渲染过程中发生意外错误: {request_id}")
+            cleanup_request_dir(request_dir)
+            raise HTTPException(status_code=500, detail="Internal rendering error")
 
     if render_semaphore:
         async with render_semaphore:

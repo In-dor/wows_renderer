@@ -9,7 +9,7 @@ _✨ 战舰世界小地图回放渲染插件 ✨_
     <img src="https://img.shields.io/badge/nonebot-v2-red.svg" alt="nonebot">
   </a>
   <a href="https://python.org">
-    <img src="https://img.shields.io/badge/python-3.8+-blue.svg" alt="python">
+    <img src="https://img.shields.io/badge/python-3.9+-blue.svg" alt="python">
   </a>
 </p>
 
@@ -51,6 +51,12 @@ _✨ 战舰世界小地图回放渲染插件 ✨_
 
 ### 2. 加载插件
 
+先在 NoneBot 环境中安装插件依赖：
+
+```bash
+pip install -r requirements.txt
+```
+
 只要将插件文件夹放入了 NoneBot 能够自动加载的目录（通常是 `src/plugins`），插件就会自动加载，无需手动修改 `bot.py`。
 
 > 注意：如果你的 Bot 配置了其他插件目录，请确保 `wows_renderer` 放在正确的位置。
@@ -66,6 +72,10 @@ _✨ 战舰世界小地图回放渲染插件 ✨_
 | `RENDER_TIMEOUT`          | int  | 600                      | 渲染超时时间(秒)，建议设大一点以防长局渲染失败 |
 | `WOWS_RENDER_TEMP_PATH`   | Path | cache/wows_render/temp   | 下载回放文件的临时目录                         |
 | `WOWS_RENDER_OUTPUT_PATH` | Path | cache/wows_render/output | 输出视频的存储目录                             |
+| `MAX_CONCURRENT_RENDERS`  | int  | 0                        | Bot 端最大并发渲染数，0 表示不限制              |
+| `MAX_REPLAY_SIZE_MB`      | int  | 100                      | 最大回放文件大小                               |
+| `MAX_VIDEO_SIZE_MB`       | int  | 300                      | 最大渲染结果及发送视频大小                     |
+| `ENABLE_CLEANUP`          | bool | true                     | 是否在处理结束后清理临时文件                   |
 
 ---
 
@@ -83,7 +93,13 @@ cd docker
 docker-compose up -d
 ```
 
-服务默认运行在 `8089` 端口。
+服务默认仅监听宿主机 `127.0.0.1:8089`，不会直接暴露到公网。跨主机部署时应通过带 TLS、请求体限制和限流的反向代理访问。
+
+建议在 `docker/.env` 中设置访问令牌：
+
+```dotenv
+RENDERER_API_TOKEN="请替换为足够长的随机字符串"
+```
 
 **2. 插件配置 (.env)**
 
@@ -91,6 +107,8 @@ docker-compose up -d
 # 远程渲染 API 地址
 # 注意：如果 Bot 也在 Docker 中，请使用宿主机 IP 或容器名 (如 http://wows-renderer-service:8000)
 RENDERER_API_ENDPOINT="http://127.0.0.1:8089"
+# 必须与 Docker 服务的 RENDERER_API_TOKEN 一致；服务未设置令牌时可省略
+RENDERER_API_TOKEN="请替换为足够长的随机字符串"
 ```
 
 ---
@@ -117,7 +135,7 @@ pip install --upgrade --force-reinstall git+https://github.com/WoWs-Builder-Team
 RENDERER_PROJECT_PATH="/path/to/your/bot/run/dir"
 
 # (可选) 指定 Python 解释器路径
-# 如果不指定，默认会尝试在 RENDERER_PROJECT_PATH/venv 下寻找，或使用系统路径
+# 如果不指定，默认会尝试在 RENDERER_PROJECT_PATH/venv 下寻找，否则使用当前 Python 解释器
 # RENDERER_PYTHON_PATH="/path/to/venv/bin/python"
 ```
 
@@ -150,7 +168,8 @@ A: 渲染过程是计算密集型的。
 - **Docker 模式**:
   ```bash
   cd docker
-  docker-compose build --no-cache
+  # 将提交号替换为经过验证的 minimap_renderer 版本
+  docker-compose build --build-arg MINIMAP_RENDERER_COMMIT=<commit>
   docker-compose up -d
   ```
 - **本地模式**:
