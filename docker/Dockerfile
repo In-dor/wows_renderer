@@ -29,7 +29,8 @@ RUN MINIMAP_RENDERER_COMMIT="$(python -c 'import json; print(json.load(open("/tm
 # 复制服务代码
 COPY server.py .
 
-RUN useradd --create-home --uid 10001 renderer
+RUN chmod 0644 /app/server.py \
+    && useradd --create-home --uid 10001 renderer
 USER renderer
 
 # 暴露端口
