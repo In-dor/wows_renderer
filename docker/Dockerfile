@@ -19,9 +19,12 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 安装 minimap_renderer
-ARG MINIMAP_RENDERER_COMMIT=03027639d1308e523ff0a61e9014d4c6bb352ba2
-RUN pip install --no-cache-dir "git+https://github.com/In-dor/minimap_renderer.git@${MINIMAP_RENDERER_COMMIT}"
+# 安装 minimap_renderer。远端分支更新时，ADD 会使安装层的缓存失效。
+ARG MINIMAP_RENDERER_REF=master
+ADD "https://api.github.com/repos/In-dor/minimap_renderer/commits/${MINIMAP_RENDERER_REF}" /tmp/minimap_renderer_commit.json
+RUN MINIMAP_RENDERER_COMMIT="$(python -c 'import json; print(json.load(open("/tmp/minimap_renderer_commit.json"))["sha"])')" \
+    && pip install --no-cache-dir "git+https://github.com/In-dor/minimap_renderer.git@${MINIMAP_RENDERER_COMMIT}" \
+    && rm /tmp/minimap_renderer_commit.json
 
 # 复制服务代码
 COPY server.py .

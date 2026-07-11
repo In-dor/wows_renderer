@@ -160,7 +160,7 @@ A: 本地模式需要手动安装 FFmpeg 并添加到系统环境变量 PATH 中
 **Q: 渲染速度很慢？**
 A: 渲染过程是计算密集型的。
 
-- Docker 模式：检查宿主机 CPU 负载，可以在 `docker-compose.yml` 中调整资源限制。
+- Docker 模式：检查宿主机 CPU 和内存负载。
 - 确保分配了足够的内存，处理长录像可能需要较多内存。
 
 **Q: 如何更新渲染器？**
@@ -168,9 +168,9 @@ A: 渲染过程是计算密集型的。
 - **Docker 模式**:
   ```bash
   cd docker
-  # 将提交号替换为经过验证的 minimap_renderer 版本
-  docker-compose build --build-arg MINIMAP_RENDERER_COMMIT=<commit>
-  docker-compose up -d
+  # 构建时会自动检测并安装 minimap_renderer 默认分支的最新提交
+  docker build -t wows-renderer-service:latest .
+  docker compose up -d
   ```
 - **本地模式**:
   ```bash
