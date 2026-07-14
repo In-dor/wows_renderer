@@ -14,6 +14,7 @@ from fastapi import (
     BackgroundTasks,
     FastAPI,
     File,
+    Form,
     Header,
     HTTPException,
     UploadFile,
@@ -201,6 +202,65 @@ def verify_token(authorization: Optional[str]) -> None:
         )
 
 
+def build_render_options(
+    fps: int,
+    speed: float,
+    resolution: str,
+    quality: int,
+    interpolation: str,
+) -> list[str]:
+    if fps <= 0:
+        raise HTTPException(
+            status_code=422, detail="fps must be greater than zero"
+        )
+    if speed <= 0:
+        raise HTTPException(
+            status_code=422, detail="speed must be greater than zero"
+        )
+    if quality < 1 or quality > 10:
+        raise HTTPException(
+            status_code=422, detail="quality must be between 1 and 10"
+        )
+    if interpolation not in {"native", "blend", "motion", "duplicate"}:
+        raise HTTPException(status_code=422, detail="Invalid interpolation mode")
+
+    try:
+        width, height = map(int, resolution.lower().split("x", maxsplit=1))
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail="resolution must use WIDTHxHEIGHT format",
+        ) from exc
+    if width <= 0 or height <= 0 or width % 2 or height % 2:
+        raise HTTPException(
+            status_code=422,
+            detail="resolution dimensions must be positive even numbers",
+        )
+    if width * 5 != height * 8:
+        raise HTTPException(
+            status_code=422,
+            detail="resolution must preserve the 8:5 aspect ratio",
+        )
+    if interpolation == "native" and fps < speed:
+        raise HTTPException(
+            status_code=422,
+            detail="native interpolation requires fps to be at least speed",
+        )
+
+    return [
+        "--fps",
+        str(fps),
+        "--speed",
+        str(speed),
+        "--resolution",
+        f"{width}x{height}",
+        "--quality",
+        str(quality),
+        "--interpolation",
+        interpolation,
+    ]
+
+
 @app.get("/")
 async def health_check():
     return {"status": "ok", "service": "wows-minimap-renderer"}
@@ -210,10 +270,18 @@ async def health_check():
 async def render_replay(
     background_tasks: BackgroundTasks,
     replay: UploadFile = File(...),
+    fps: int = Form(60),
+    speed: float = Form(15),
+    resolution: str = Form("1920x1200"),
+    quality: int = Form(8),
+    interpolation: str = Form("native"),
     authorization: Optional[str] = Header(default=None),
     content_length: Optional[int] = Header(default=None),
 ):
     verify_token(authorization)
+    render_options = build_render_options(
+        fps, speed, resolution, quality, interpolation
+    )
     if content_length and content_length > MAX_UPLOAD_BYTES + 1024 * 1024:
         raise HTTPException(status_code=413, detail="Replay file is too large")
 
@@ -254,7 +322,14 @@ async def render_replay(
             cleanup_request_dir(request_dir)
             raise HTTPException(status_code=500, detail="Failed to save file")
 
-        command = [sys.executable, "-m", "render", "--replay", str(input_path)]
+        command = [
+            sys.executable,
+            "-m",
+            "render",
+            "--replay",
+            str(input_path),
+            *render_options,
+        ]
         logger.info(f"执行渲染请求: {request_id}")
 
         try:

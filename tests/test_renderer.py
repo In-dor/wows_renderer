@@ -62,6 +62,13 @@ async def test_remote_render_streams_output(monkeypatch, tmp_path: Path):
     method, url, kwargs = FakeClient.request
     assert (method, url) == ("POST", "http://renderer.test/render")
     assert kwargs["headers"] == {"Authorization": "Bearer secret"}
+    assert kwargs["data"] == {
+        "fps": "60",
+        "speed": "15",
+        "resolution": "1920x1200",
+        "quality": "8",
+        "interpolation": "native",
+    }
 
 
 @pytest.mark.asyncio
@@ -79,3 +86,46 @@ async def test_remote_render_removes_oversized_partial(monkeypatch, tmp_path: Pa
     assert "超过大小限制" in message
     assert not output.exists()
     assert not output.with_suffix(".mp4.part").exists()
+
+
+@pytest.mark.asyncio
+async def test_local_render_passes_upstream_options(monkeypatch, tmp_path: Path):
+    replay = tmp_path / "battle.wowsreplay"
+    output = tmp_path / "result.mp4"
+    replay.write_bytes(b"replay")
+    captured = {}
+
+    class Process:
+        returncode = None
+        pid = 42
+
+        async def wait(self):
+            replay.with_suffix(".mp4").write_bytes(b"video")
+            self.returncode = 0
+
+    async def create_process(*command, **kwargs):
+        captured["command"] = list(command)
+        captured["kwargs"] = kwargs
+        return Process()
+
+    monkeypatch.setattr(renderer.plugin_config, "renderer_api_endpoint", None)
+    monkeypatch.setattr(renderer, "PYTHON_EXECUTABLE", Path("/usr/bin/python3"))
+    monkeypatch.setattr(renderer, "RENDERER_PROJECT_PATH", tmp_path)
+    monkeypatch.setattr(renderer.asyncio, "create_subprocess_exec", create_process)
+
+    success, _, _ = await renderer._do_render_replay(replay, output)
+
+    assert success is True
+    assert output.read_bytes() == b"video"
+    assert captured["command"][-10:] == [
+        "--fps",
+        "60",
+        "--speed",
+        "15",
+        "--resolution",
+        "1920x1200",
+        "--quality",
+        "8",
+        "--interpolation",
+        "native",
+    ]

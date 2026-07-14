@@ -70,6 +70,11 @@ pip install -r requirements.txt
 | 配置项                    | 类型 | 默认值                   | 说明                                           |
 | :------------------------ | :--- | :----------------------- | :--------------------------------------------- |
 | `RENDER_TIMEOUT`          | int  | 600                      | 渲染超时时间(秒)，建议设大一点以防长局渲染失败 |
+| `RENDER_FPS`              | int  | 60                       | 输出视频帧率                                   |
+| `RENDER_SPEED`            | float| 15                       | 延时播放倍速                                   |
+| `RENDER_RESOLUTION`       | str  | 1920x1200                | 输出分辨率，必须为 8:5 的正偶数宽高             |
+| `RENDER_QUALITY`          | int  | 8                        | 编码质量，范围 1-10                            |
+| `RENDER_INTERPOLATION`    | str  | native                   | 插值模式：native/blend/motion/duplicate        |
 | `WOWS_RENDER_TEMP_PATH`   | Path | cache/wows_render/temp   | 下载回放文件的临时目录                         |
 | `WOWS_RENDER_OUTPUT_PATH` | Path | cache/wows_render/output | 输出视频的存储目录                             |
 | `MAX_CONCURRENT_RENDERS`  | int  | 0                        | Bot 端最大并发渲染数，0 表示不限制              |
@@ -109,7 +114,16 @@ RENDERER_API_TOKEN="请替换为足够长的随机字符串"
 RENDERER_API_ENDPOINT="http://127.0.0.1:8089"
 # 必须与 Docker 服务的 RENDERER_API_TOKEN 一致；服务未设置令牌时可省略
 RENDERER_API_TOKEN="请替换为足够长的随机字符串"
+
+# 可选：覆盖上游渲染器默认参数
+RENDER_FPS=60
+RENDER_SPEED=15
+RENDER_RESOLUTION="1920x1200"
+RENDER_QUALITY=8
+RENDER_INTERPOLATION="native"
 ```
+
+`native` 模式要求 `RENDER_FPS` 不低于 `RENDER_SPEED`。更快、更小的输出可使用 `30 FPS / 15x / 1360x850 / quality 7 / native`。
 
 ---
 
@@ -124,8 +138,8 @@ RENDERER_API_TOKEN="请替换为足够长的随机字符串"
 ```bash
 # 确保 pip 升级到最新
 pip install --upgrade pip
-# 安装渲染器
-pip install --upgrade --force-reinstall git+https://github.com/WoWs-Builder-Team/minimap_renderer.git
+# 安装当前维护的渲染器
+pip install --upgrade --force-reinstall git+https://github.com/In-dor/minimap_renderer.git
 ```
 
 **2. 插件配置 (.env)**
@@ -137,6 +151,13 @@ RENDERER_PROJECT_PATH="/path/to/your/bot/run/dir"
 # (可选) 指定 Python 解释器路径
 # 如果不指定，默认会尝试在 RENDERER_PROJECT_PATH/venv 下寻找，否则使用当前 Python 解释器
 # RENDERER_PYTHON_PATH="/path/to/venv/bin/python"
+
+# 渲染参数与 Docker 模式相同，插件会转换为上游 CLI 参数
+RENDER_FPS=60
+RENDER_SPEED=15
+RENDER_RESOLUTION="1920x1200"
+RENDER_QUALITY=8
+RENDER_INTERPOLATION="native"
 ```
 
 ## 🚀 使用方法
@@ -174,7 +195,7 @@ A: 渲染过程是计算密集型的。
   ```
 - **本地模式**:
   ```bash
-  pip install --upgrade --force-reinstall git+https://github.com/WoWs-Builder-Team/minimap_renderer.git
+  pip install --upgrade --force-reinstall git+https://github.com/In-dor/minimap_renderer.git
   ```
 
 ## 📝 许可证

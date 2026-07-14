@@ -49,7 +49,7 @@ async def test_render_uses_private_request_directory(monkeypatch, tmp_path: Path
         pid = 42
 
         async def wait(self):
-            Path(captured["command"][-1]).with_suffix(".mp4").write_bytes(b"video")
+            Path(captured["command"][4]).with_suffix(".mp4").write_bytes(b"video")
             self.returncode = 0
 
     async def create_process(*command, **_):
@@ -65,13 +65,30 @@ async def test_render_uses_private_request_directory(monkeypatch, tmp_path: Path
     response = await server.render_replay(
         background_tasks,
         replay,
+        fps=30,
+        speed=15,
+        resolution="1360x850",
+        quality=7,
+        interpolation="duplicate",
         authorization=None,
         content_length=None,
     )
 
     request_dir = tmp_path / request_id
     assert Path(response.path) == request_dir / "input.mp4"
-    assert captured["command"][-1] == str(request_dir / "input.wowsreplay")
+    assert captured["command"][4] == str(request_dir / "input.wowsreplay")
+    assert captured["command"][-10:] == (
+        "--fps",
+        "30",
+        "--speed",
+        "15",
+        "--resolution",
+        "1360x850",
+        "--quality",
+        "7",
+        "--interpolation",
+        "duplicate",
+    )
     assert (request_dir / "input.wowsreplay").read_bytes() == b"replay-data"
 
     await background_tasks()
@@ -107,8 +124,32 @@ async def test_cancelled_render_terminates_and_cleans(monkeypatch, tmp_path: Pat
 
     with pytest.raises(asyncio.CancelledError):
         await server.render_replay(
-            BackgroundTasks(), replay, authorization=None, content_length=None
+            BackgroundTasks(),
+            replay,
+            fps=60,
+            speed=15,
+            resolution="1920x1200",
+            quality=8,
+            interpolation="native",
+            authorization=None,
+            content_length=None,
         )
 
     assert terminated == [42]
     assert not (tmp_path / request_id).exists()
+
+
+@pytest.mark.parametrize(
+    ("options", "detail"),
+    [
+        ((15, 30, "1920x1200", 8, "native"), "at least speed"),
+        ((60, 15, "1920x1080", 8, "native"), "8:5"),
+        ((60, 15, "1920x1200", 11, "native"), "between 1 and 10"),
+    ],
+)
+def test_render_option_validation(options, detail):
+    with pytest.raises(HTTPException) as exc_info:
+        server.build_render_options(*options)
+
+    assert exc_info.value.status_code == 422
+    assert detail in exc_info.value.detail

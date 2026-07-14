@@ -45,6 +45,21 @@ if not plugin_config.renderer_api_endpoint and RENDERER_PROJECT_PATH:
         )
 
 
+def _render_options() -> dict[str, str]:
+    return {
+        "fps": str(plugin_config.render_fps),
+        "speed": str(plugin_config.render_speed),
+        "resolution": plugin_config.render_resolution,
+        "quality": str(plugin_config.render_quality),
+        "interpolation": plugin_config.render_interpolation,
+    }
+
+
+def _append_render_options(command: list[str]) -> None:
+    for name, value in _render_options().items():
+        command.extend((f"--{name}", value))
+
+
 async def _do_render_replay(
     replay_path: Path, output_path: Path
 ) -> tuple[bool, str, str]:
@@ -70,6 +85,7 @@ async def _do_render_replay(
                         "POST",
                         f"{plugin_config.renderer_api_endpoint}/render",
                         files=files,
+                        data=_render_options(),
                         headers=headers,
                     ) as resp:
                         if resp.status_code != 200:
@@ -117,6 +133,7 @@ async def _do_render_replay(
         "--replay",
         str(replay_path.resolve()),
     ]
+    _append_render_options(command)
 
     logger.info(f"执行渲染命令: {' '.join(command)}")
 

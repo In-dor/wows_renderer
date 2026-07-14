@@ -2,7 +2,7 @@
 
 import nonebot
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
@@ -26,6 +26,13 @@ class Config(BaseModel):
 
     # 渲染相关设置
     render_timeout: int = Field(default=600, gt=0)  # 渲染超时时间(秒)
+    render_fps: int = Field(default=60, gt=0)
+    render_speed: float = Field(default=15, gt=0)
+    render_resolution: str = "1920x1200"
+    render_quality: int = Field(default=8, ge=1, le=10)
+    render_interpolation: Literal["native", "blend", "motion", "duplicate"] = (
+        "native"
+    )
     enable_cleanup: bool = True  # 是否自动清理临时文件
     max_concurrent_renders: int = Field(default=0, ge=0)  # 0为不限制
     max_replay_size_mb: int = Field(default=100, gt=0)
@@ -35,6 +42,19 @@ class Config(BaseModel):
     @classmethod
     def normalize_api_endpoint(cls, value: Optional[str]) -> Optional[str]:
         return value.rstrip("/") if value else None
+
+    @field_validator("render_resolution")
+    @classmethod
+    def validate_render_resolution(cls, value: str) -> str:
+        try:
+            width, height = map(int, value.lower().split("x", maxsplit=1))
+        except ValueError as exc:
+            raise ValueError("渲染分辨率必须使用 WIDTHxHEIGHT 格式") from exc
+        if width <= 0 or height <= 0 or width % 2 or height % 2:
+            raise ValueError("渲染分辨率的宽高必须是正偶数")
+        if width * 5 != height * 8:
+            raise ValueError("渲染分辨率必须保持 8:5 宽高比")
+        return f"{width}x{height}"
 
     @model_validator(mode="after")
     def check_paths_and_create(self) -> "Config":
@@ -48,6 +68,12 @@ class Config(BaseModel):
             raise ValueError(
                 "必须配置 renderer_project_path (本地渲染) 或 renderer_api_endpoint (远程渲染)"
             )
+
+        if (
+            self.render_interpolation == "native"
+            and self.render_fps < self.render_speed
+        ):
+            raise ValueError("原生插值模式要求 render_fps 不低于 render_speed")
 
         self.wows_render_temp_path.mkdir(parents=True, exist_ok=True)
         self.wows_render_output_path.mkdir(parents=True, exist_ok=True)
