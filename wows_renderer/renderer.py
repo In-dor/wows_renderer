@@ -52,6 +52,8 @@ def _render_options() -> dict[str, str]:
         "resolution": plugin_config.render_resolution,
         "quality": str(plugin_config.render_quality),
         "interpolation": plugin_config.render_interpolation,
+        "codec": plugin_config.render_codec,
+        "encoder": plugin_config.render_encoder,
     }
 
 

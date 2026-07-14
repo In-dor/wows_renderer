@@ -35,6 +35,47 @@ def test_verify_token(monkeypatch):
     server.verify_token("Bearer expected-token")
 
 
+def test_legacy_http_request_uses_encoder_defaults(monkeypatch, tmp_path: Path):
+    request_id = "86ad491c-c840-45d4-8788-4d77bbdc745f"
+    monkeypatch.setattr(server, "TEMP_DIR", tmp_path)
+    monkeypatch.setattr(server.uuid, "uuid4", lambda: request_id)
+    monkeypatch.setattr(server, "API_TOKEN", None)
+    captured = {}
+
+    class Process:
+        returncode = None
+        pid = 42
+
+        def __init__(self):
+            self.stdout = server.asyncio.StreamReader()
+            self.stdout.feed_eof()
+
+        async def wait(self):
+            Path(captured["command"][4]).with_suffix(".mp4").write_bytes(b"video")
+            self.returncode = 0
+
+    async def create_process(*command, **_kwargs):
+        captured["command"] = command
+        return Process()
+
+    monkeypatch.setattr(server.asyncio, "create_subprocess_exec", create_process)
+
+    response = TestClient(server.app).post(
+        "/render",
+        files={"replay": ("battle.wowsreplay", b"replay-data")},
+    )
+
+    assert response.status_code == 200
+    assert response.content == b"video"
+    assert captured["command"][-4:] == (
+        "--codec",
+        "h264",
+        "--encoder",
+        "auto",
+    )
+    assert not (tmp_path / request_id).exists()
+
+
 @pytest.mark.asyncio
 async def test_render_uses_private_request_directory(
     monkeypatch, tmp_path: Path, capsys
@@ -80,6 +121,8 @@ async def test_render_uses_private_request_directory(
         resolution="1360x850",
         quality=7,
         interpolation="duplicate",
+        codec="h265",
+        encoder="qsv",
         authorization=None,
         content_length=None,
     )
@@ -92,7 +135,7 @@ async def test_render_uses_private_request_directory(
     assert "5.00it/s" in terminal_output
     assert captured["kwargs"]["stdout"] == server.asyncio.subprocess.PIPE
     assert captured["command"][4] == str(request_dir / "input.wowsreplay")
-    assert captured["command"][-10:] == (
+    assert captured["command"][-14:] == (
         "--fps",
         "30",
         "--speed",
@@ -103,6 +146,10 @@ async def test_render_uses_private_request_directory(
         "7",
         "--interpolation",
         "duplicate",
+        "--codec",
+        "h265",
+        "--encoder",
+        "qsv",
     )
     assert (request_dir / "input.wowsreplay").read_bytes() == b"replay-data"
 
@@ -150,6 +197,8 @@ async def test_cancelled_render_terminates_and_cleans(monkeypatch, tmp_path: Pat
             resolution="1920x1200",
             quality=8,
             interpolation="native",
+            codec="h264",
+            encoder="auto",
             authorization=None,
             content_length=None,
         )
@@ -161,9 +210,17 @@ async def test_cancelled_render_terminates_and_cleans(monkeypatch, tmp_path: Pat
 @pytest.mark.parametrize(
     ("options", "detail"),
     [
-        ((15, 30, "1920x1200", 8, "native"), "at least speed"),
-        ((60, 15, "1920x1080", 8, "native"), "8:5"),
-        ((60, 15, "1920x1200", 11, "native"), "between 1 and 10"),
+        (
+            (15, 30, "1920x1200", 8, "native", "h264", "auto"),
+            "at least speed",
+        ),
+        ((60, 15, "1920x1080", 8, "native", "h264", "auto"), "8:5"),
+        (
+            (60, 15, "1920x1200", 11, "native", "h264", "auto"),
+            "between 1 and 10",
+        ),
+        ((60, 15, "1920x1200", 8, "native", "vp9", "auto"), "codec"),
+        ((60, 15, "1920x1200", 8, "native", "h264", "vaapi"), "encoder"),
     ],
 )
 def test_render_option_validation(options, detail):

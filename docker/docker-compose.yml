@@ -13,6 +13,9 @@ services:
       RENDER_TIMEOUT: ${RENDER_TIMEOUT:-600}
       MAX_REPLAY_SIZE_MB: ${MAX_REPLAY_SIZE_MB:-100}
       RENDERER_API_TOKEN: ${RENDERER_API_TOKEN:-}
+    # Intel QSV 编码可取消下列注释，并设置 Bot 端 RENDER_ENCODER=qsv。
+    # devices:
+    #   - /dev/dri:/dev/dri
     # healthcheck:
     #   test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/', timeout=3)"]
     #   interval: 30s

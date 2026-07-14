@@ -238,6 +238,8 @@ def build_render_options(
     resolution: str,
     quality: int,
     interpolation: str,
+    codec: str,
+    encoder: str,
 ) -> list[str]:
     if fps <= 0:
         raise HTTPException(
@@ -253,6 +255,10 @@ def build_render_options(
         )
     if interpolation not in {"native", "blend", "motion", "duplicate"}:
         raise HTTPException(status_code=422, detail="Invalid interpolation mode")
+    if codec not in {"h264", "h265", "av1"}:
+        raise HTTPException(status_code=422, detail="Invalid video codec")
+    if encoder not in {"auto", "cpu", "nvenc", "qsv", "amf"}:
+        raise HTTPException(status_code=422, detail="Invalid video encoder")
 
     try:
         width, height = map(int, resolution.lower().split("x", maxsplit=1))
@@ -288,6 +294,10 @@ def build_render_options(
         str(quality),
         "--interpolation",
         interpolation,
+        "--codec",
+        codec,
+        "--encoder",
+        encoder,
     ]
 
 
@@ -305,12 +315,14 @@ async def render_replay(
     resolution: str = Form("1920x1200"),
     quality: int = Form(8),
     interpolation: str = Form("native"),
+    codec: str = Form("h264"),
+    encoder: str = Form("auto"),
     authorization: Optional[str] = Header(default=None),
     content_length: Optional[int] = Header(default=None),
 ):
     verify_token(authorization)
     render_options = build_render_options(
-        fps, speed, resolution, quality, interpolation
+        fps, speed, resolution, quality, interpolation, codec, encoder
     )
     if content_length and content_length > MAX_UPLOAD_BYTES + 1024 * 1024:
         raise HTTPException(status_code=413, detail="Replay file is too large")

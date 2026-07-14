@@ -68,6 +68,8 @@ async def test_remote_render_streams_output(monkeypatch, tmp_path: Path):
         "resolution": "1920x1200",
         "quality": "8",
         "interpolation": "native",
+        "codec": "h264",
+        "encoder": "auto",
     }
 
 
@@ -131,7 +133,7 @@ async def test_local_render_passes_upstream_options(
     assert "50%" in terminal_output
     assert "5.00it/s" in terminal_output
     assert captured["kwargs"]["stdout"] == renderer.asyncio.subprocess.PIPE
-    assert captured["command"][-10:] == [
+    assert captured["command"][-14:] == [
         "--fps",
         "60",
         "--speed",
@@ -142,4 +144,8 @@ async def test_local_render_passes_upstream_options(
         "8",
         "--interpolation",
         "native",
+        "--codec",
+        "h264",
+        "--encoder",
+        "auto",
     ]
