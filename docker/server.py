@@ -257,7 +257,7 @@ def build_render_options(
         raise HTTPException(status_code=422, detail="Invalid interpolation mode")
     if codec not in {"h264", "h265", "av1"}:
         raise HTTPException(status_code=422, detail="Invalid video codec")
-    if encoder not in {"auto", "cpu", "nvenc", "qsv", "amf"}:
+    if encoder not in {"auto", "cpu", "nvenc", "qsv", "vaapi", "amf"}:
         raise HTTPException(status_code=422, detail="Invalid video encoder")
 
     try:

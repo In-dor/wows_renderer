@@ -34,7 +34,9 @@ class Config(BaseModel):
         "native"
     )
     render_codec: Literal["h264", "h265", "av1"] = "h264"
-    render_encoder: Literal["auto", "cpu", "nvenc", "qsv", "amf"] = "auto"
+    render_encoder: Literal[
+        "auto", "cpu", "nvenc", "qsv", "vaapi", "amf"
+    ] = "auto"
     enable_cleanup: bool = True  # 是否自动清理临时文件
     max_concurrent_renders: int = Field(default=0, ge=0)  # 0为不限制
     max_replay_size_mb: int = Field(default=100, gt=0)

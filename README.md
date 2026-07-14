@@ -76,7 +76,7 @@ pip install -r requirements.txt
 | `RENDER_QUALITY`          | int  | 8                        | 编码质量，范围 1-10                            |
 | `RENDER_INTERPOLATION`    | str  | native                   | 插值模式：native/blend/motion/duplicate        |
 | `RENDER_CODEC`            | str  | h264                     | 视频编码格式：h264/h265/av1                    |
-| `RENDER_ENCODER`          | str  | auto                     | 编码后端：auto/cpu/nvenc/qsv/amf               |
+| `RENDER_ENCODER`          | str  | auto                     | 编码后端：auto/cpu/nvenc/qsv/vaapi/amf         |
 | `WOWS_RENDER_TEMP_PATH`   | Path | cache/wows_render/temp   | 下载回放文件的临时目录                         |
 | `WOWS_RENDER_OUTPUT_PATH` | Path | cache/wows_render/output | 输出视频的存储目录                             |
 | `MAX_CONCURRENT_RENDERS`  | int  | 0                        | Bot 端最大并发渲染数，0 表示不限制              |
@@ -129,7 +129,11 @@ RENDER_ENCODER="auto"
 
 `native` 模式要求 `RENDER_FPS` 不低于 `RENDER_SPEED`。更快、更小的输出可使用 `30 FPS / 15x / 1360x850 / quality 7 / native`。
 
-`RENDER_ENCODER=auto` 会实测 NVENC、QSV 和 AMF，并在硬件或驱动不可用时回退到 CPU。显式选择硬件后端时，初始化失败会直接终止渲染；Docker 使用 Intel QSV 还需取消 `docker-compose.yml` 中 `/dev/dri` 的设备映射注释，并确保镜像中安装了对应媒体驱动。`h264` 兼容性最好，`h265` 和 `av1` 通常有更高压缩率，但播放环境支持度较低。
+`RENDER_ENCODER=auto` 会实测 NVENC、QSV、VAAPI 和 AMF，并在硬件或驱动不可用时回退到 CPU。显式选择硬件后端时，初始化失败会直接终止渲染。`h264` 兼容性最好，`h265` 和 `av1` 通常有更高压缩率，但播放环境支持度较低。
+
+本仓库 Docker 配置默认映射 Intel 核显的 `/dev/dri/renderD128`，并通过 `RENDER_GROUP_ID` 授予非 root 服务用户访问权限。部署前运行 `getent group render | cut -d: -f3` 获取宿主机 render 组 GID；如果不是 `105`，在 `docker/.env` 中设置对应值。设备路径不同时还需设置 `VAAPI_DEVICE`。镜像固定使用 Debian 12，以保留 Coffee Lake 核显所需的 Intel Media SDK 兼容运行时。
+
+Intel UHD P630 硬件支持 H.264/H.265 编码，但不支持 AV1 硬件编码。本镜像安装完整的 Intel 媒体驱动，H.264/H.265 VAAPI 均已在当前 E-2176M NAS 实测可用。建议保留 `RENDER_ENCODER=auto`：QSV 初始化失败后会继续测试 VAAPI，均不可用时才回退 CPU。也可以显式设置 `RENDER_ENCODER=vaapi`，但后端不可用时渲染会直接失败。
 
 ---
 

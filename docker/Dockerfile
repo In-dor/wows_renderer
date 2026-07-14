@@ -1,16 +1,19 @@
-FROM python:3.10-slim
+FROM python:3.10-slim-bookworm
 
 WORKDIR /app
 
 # 安装系统依赖 (OpenCV, Matplotlib 等需要)
 # 添加重试和 --fix-missing 以应对代理/网络不稳定导致的 502 错误
-RUN apt-get update && apt-get install -y \
+RUN sed -i 's/^Components: main$/Components: main non-free/' \
+        /etc/apt/sources.list.d/debian.sources \
+    && apt-get update && apt-get install -y \
     -o Acquire::Retries=3 \
     -o Acquire::http::Timeout=30 \
     -o Acquire::https::Timeout=30 \
     --fix-missing \
     git \
     ffmpeg \
+    intel-media-va-driver-non-free \
     libsm6 \
     libxext6 \
     && rm -rf /var/lib/apt/lists/*
@@ -32,6 +35,9 @@ COPY server.py .
 RUN chmod 0644 /app/server.py \
     && useradd --create-home --uid 10001 renderer
 USER renderer
+
+# imageio-ffmpeg 自带的精简 FFmpeg 不包含所需硬件后端，改用系统 FFmpeg。
+ENV IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg
 
 # 暴露端口
 EXPOSE 8000

@@ -13,9 +13,12 @@ services:
       RENDER_TIMEOUT: ${RENDER_TIMEOUT:-600}
       MAX_REPLAY_SIZE_MB: ${MAX_REPLAY_SIZE_MB:-100}
       RENDERER_API_TOKEN: ${RENDERER_API_TOKEN:-}
-    # Intel QSV 编码可取消下列注释，并设置 Bot 端 RENDER_ENCODER=qsv。
-    # devices:
-    #   - /dev/dri:/dev/dri
+      VAAPI_DEVICE: ${VAAPI_DEVICE:-/dev/dri/renderD128}
+    devices:
+      - ${VAAPI_DEVICE:-/dev/dri/renderD128}:${VAAPI_DEVICE:-/dev/dri/renderD128}
+    group_add:
+      # 使用宿主机 `getent group render | cut -d: -f3` 获取，当前 NAS 为 105。
+      - "${RENDER_GROUP_ID:-105}"
     # healthcheck:
     #   test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/', timeout=3)"]
     #   interval: 30s

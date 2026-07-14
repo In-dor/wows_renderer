@@ -122,7 +122,7 @@ async def test_render_uses_private_request_directory(
         quality=7,
         interpolation="duplicate",
         codec="h265",
-        encoder="qsv",
+        encoder="vaapi",
         authorization=None,
         content_length=None,
     )
@@ -149,7 +149,7 @@ async def test_render_uses_private_request_directory(
         "--codec",
         "h265",
         "--encoder",
-        "qsv",
+        "vaapi",
     )
     assert (request_dir / "input.wowsreplay").read_bytes() == b"replay-data"
 
@@ -220,7 +220,10 @@ async def test_cancelled_render_terminates_and_cleans(monkeypatch, tmp_path: Pat
             "between 1 and 10",
         ),
         ((60, 15, "1920x1200", 8, "native", "vp9", "auto"), "codec"),
-        ((60, 15, "1920x1200", 8, "native", "h264", "vaapi"), "encoder"),
+        (
+            (60, 15, "1920x1200", 8, "native", "h264", "videotoolbox"),
+            "encoder",
+        ),
     ],
 )
 def test_render_option_validation(options, detail):
