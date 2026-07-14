@@ -167,6 +167,36 @@ def read_log_tail(log_path: Path, limit: int = 4000) -> str:
         return log_file.read().decode("utf-8", errors="replace")
 
 
+def write_terminal_output(data: bytes) -> None:
+    stream = getattr(sys.stderr, "buffer", sys.stderr)
+    try:
+        stream.write(data)
+    except TypeError:
+        stream.write(data.decode("utf-8", errors="replace"))
+    stream.flush()
+
+
+async def relay_process_output(
+    stream: asyncio.StreamReader, log_file, request_id: str
+) -> None:
+    """Tee renderer output to its failure log and the container terminal."""
+    prefix = f"[render:{request_id[:8]}] ".encode()
+    needs_prefix = True
+
+    while chunk := await stream.read(4096):
+        log_file.write(chunk)
+        log_file.flush()
+        terminal_data = bytearray()
+        for value in chunk:
+            if needs_prefix and value not in (10, 13):
+                terminal_data.extend(prefix)
+                needs_prefix = False
+            terminal_data.append(value)
+            if value in (10, 13):
+                needs_prefix = True
+        write_terminal_output(bytes(terminal_data))
+
+
 async def terminate_process_tree(process: asyncio.subprocess.Process) -> None:
     if process.returncode is not None:
         return
@@ -334,20 +364,28 @@ async def render_replay(
 
         try:
             process = None
+            output_task = None
             with log_path.open("wb") as log_file:
                 process = await asyncio.create_subprocess_exec(
                     *command,
-                    stdout=log_file,
+                    stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.STDOUT,
                     start_new_session=True,
+                )
+                if process.stdout is None:
+                    raise RuntimeError("Renderer process output is unavailable")
+                output_task = asyncio.create_task(
+                    relay_process_output(process.stdout, log_file, request_id)
                 )
                 try:
                     await asyncio.wait_for(process.wait(), timeout=RENDER_TIMEOUT)
                 except asyncio.TimeoutError:
                     await terminate_process_tree(process)
+                    await output_task
                     cleanup_request_dir(request_dir)
                     logger.error(f"渲染超时: {request_id}")
                     raise HTTPException(status_code=504, detail="Rendering timed out")
+                await output_task
 
             if process.returncode != 0:
                 error_log = await asyncio.to_thread(read_log_tail, log_path)
@@ -372,6 +410,8 @@ async def render_replay(
         except asyncio.CancelledError:
             if process and process.returncode is None:
                 await asyncio.shield(terminate_process_tree(process))
+            if output_task:
+                await asyncio.shield(output_task)
             cleanup_request_dir(request_dir)
             raise
         except HTTPException:

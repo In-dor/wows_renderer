@@ -60,6 +60,36 @@ def _append_render_options(command: list[str]) -> None:
         command.extend((f"--{name}", value))
 
 
+def _write_terminal_output(data: bytes) -> None:
+    stream = getattr(sys.stderr, "buffer", sys.stderr)
+    try:
+        stream.write(data)
+    except TypeError:
+        stream.write(data.decode("utf-8", errors="replace"))
+    stream.flush()
+
+
+async def _relay_process_output(
+    stream: asyncio.StreamReader, log_file, label: str
+) -> None:
+    """Tee renderer output to its failure log and the live terminal."""
+    prefix = f"[render:{label}] ".encode()
+    needs_prefix = True
+
+    while chunk := await stream.read(4096):
+        log_file.write(chunk)
+        log_file.flush()
+        terminal_data = bytearray()
+        for value in chunk:
+            if needs_prefix and value not in (10, 13):
+                terminal_data.extend(prefix)
+                needs_prefix = False
+            terminal_data.append(value)
+            if value in (10, 13):
+                needs_prefix = True
+        _write_terminal_output(bytes(terminal_data))
+
+
 async def _do_render_replay(
     replay_path: Path, output_path: Path
 ) -> tuple[bool, str, str]:
@@ -141,6 +171,7 @@ async def _do_render_replay(
     original_video_path = replay_path.with_suffix(".mp4")
     log_path = output_path.with_suffix(".render.log")
     process = None
+    output_task = None
 
     try:
         # 执行渲染进程
@@ -153,10 +184,15 @@ async def _do_render_replay(
         with log_path.open("wb") as log_file:
             process = await asyncio.create_subprocess_exec(
                 *command,
-                stdout=log_file,
+                stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
                 cwd=RENDERER_PROJECT_PATH,
                 **process_kwargs,
+            )
+            if process.stdout is None:
+                raise RuntimeError("无法读取渲染器进程输出")
+            output_task = asyncio.create_task(
+                _relay_process_output(process.stdout, log_file, replay_path.stem)
             )
             try:
                 await asyncio.wait_for(
@@ -164,7 +200,9 @@ async def _do_render_replay(
                 )
             except asyncio.TimeoutError:
                 await _terminate_process_tree(process)
+                await output_task
                 return False, "渲染超时，已中止处理", "Rendering process timeout"
+            await output_task
 
         output_log = await asyncio.to_thread(_read_log_tail, log_path)
 
@@ -186,6 +224,8 @@ async def _do_render_replay(
     except asyncio.CancelledError:
         if process and process.returncode is None:
             await asyncio.shield(_terminate_process_tree(process))
+        if output_task:
+            await asyncio.shield(output_task)
         raise
     finally:
         if log_path.exists():

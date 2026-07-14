@@ -167,6 +167,8 @@ RENDER_INTERPOLATION="native"
 3.  机器人回复 "收到回放文件..." 并开始下载。
 4.  渲染完成后，机器人会发送生成的 MP4 视频。
 
+渲染期间，终端会实时显示上游渲染器的百分比、已完成/总迭代数、耗时、预计剩余时间和 `it/s`。Docker 模式可使用 `docker compose logs -f` 查看；本地模式直接显示在 Bot 终端。`it/s` 表示渲染循环速度，不是输出视频的播放帧率。
+
 ## ❓ 常见问题 (FAQ)
 
 **Q: Docker 模式下 Bot 提示 "Connection refused"?**

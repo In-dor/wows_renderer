@@ -89,7 +89,9 @@ async def test_remote_render_removes_oversized_partial(monkeypatch, tmp_path: Pa
 
 
 @pytest.mark.asyncio
-async def test_local_render_passes_upstream_options(monkeypatch, tmp_path: Path):
+async def test_local_render_passes_upstream_options(
+    monkeypatch, tmp_path: Path, capsys
+):
     replay = tmp_path / "battle.wowsreplay"
     output = tmp_path / "result.mp4"
     replay.write_bytes(b"replay")
@@ -98,6 +100,13 @@ async def test_local_render_passes_upstream_options(monkeypatch, tmp_path: Path)
     class Process:
         returncode = None
         pid = 42
+
+        def __init__(self):
+            self.stdout = renderer.asyncio.StreamReader()
+            self.stdout.feed_data(
+                b"\r 50%|#####     | 5/10 [00:01<00:01, 5.00it/s]"
+            )
+            self.stdout.feed_eof()
 
         async def wait(self):
             replay.with_suffix(".mp4").write_bytes(b"video")
@@ -117,6 +126,11 @@ async def test_local_render_passes_upstream_options(monkeypatch, tmp_path: Path)
 
     assert success is True
     assert output.read_bytes() == b"video"
+    terminal_output = capsys.readouterr().err
+    assert "[render:battle]" in terminal_output
+    assert "50%" in terminal_output
+    assert "5.00it/s" in terminal_output
+    assert captured["kwargs"]["stdout"] == renderer.asyncio.subprocess.PIPE
     assert captured["command"][-10:] == [
         "--fps",
         "60",

@@ -36,7 +36,9 @@ def test_verify_token(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_render_uses_private_request_directory(monkeypatch, tmp_path: Path):
+async def test_render_uses_private_request_directory(
+    monkeypatch, tmp_path: Path, capsys
+):
     request_id = "6b050938-d99c-4a85-86c7-6238a1278b91"
     monkeypatch.setattr(server, "TEMP_DIR", tmp_path)
     monkeypatch.setattr(server.uuid, "uuid4", lambda: request_id)
@@ -48,12 +50,20 @@ async def test_render_uses_private_request_directory(monkeypatch, tmp_path: Path
         returncode = None
         pid = 42
 
+        def __init__(self):
+            self.stdout = server.asyncio.StreamReader()
+            self.stdout.feed_data(
+                b"\r 50%|#####     | 5/10 [00:01<00:01, 5.00it/s]"
+            )
+            self.stdout.feed_eof()
+
         async def wait(self):
             Path(captured["command"][4]).with_suffix(".mp4").write_bytes(b"video")
             self.returncode = 0
 
-    async def create_process(*command, **_):
+    async def create_process(*command, **kwargs):
         captured["command"] = command
+        captured["kwargs"] = kwargs
         return Process()
 
     monkeypatch.setattr(server.asyncio, "create_subprocess_exec", create_process)
@@ -76,6 +86,11 @@ async def test_render_uses_private_request_directory(monkeypatch, tmp_path: Path
 
     request_dir = tmp_path / request_id
     assert Path(response.path) == request_dir / "input.mp4"
+    terminal_output = capsys.readouterr().err
+    assert "[render:6b050938]" in terminal_output
+    assert "50%" in terminal_output
+    assert "5.00it/s" in terminal_output
+    assert captured["kwargs"]["stdout"] == server.asyncio.subprocess.PIPE
     assert captured["command"][4] == str(request_dir / "input.wowsreplay")
     assert captured["command"][-10:] == (
         "--fps",
@@ -105,6 +120,10 @@ async def test_cancelled_render_terminates_and_cleans(monkeypatch, tmp_path: Pat
     class Process:
         returncode = None
         pid = 42
+
+        def __init__(self):
+            self.stdout = server.asyncio.StreamReader()
+            self.stdout.feed_eof()
 
         async def wait(self):
             raise asyncio.CancelledError
