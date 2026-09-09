@@ -37,10 +37,14 @@ class Config(BaseModel):
     render_encoder: Literal[
         "auto", "cpu", "nvenc", "qsv", "vaapi", "amf"
     ] = "auto"
+    enable_battle_report: bool = True  # 是否生成并发送 2.4K 战报全景长图
+    enable_video_render: bool = True  # 是否渲染对局小地图视频
+    render_report_only: bool = False  # 是否仅生成战报长图 (跳过视频渲染)
     enable_cleanup: bool = True  # 是否自动清理临时文件
     max_concurrent_renders: int = Field(default=0, ge=0)  # 0为不限制
     max_replay_size_mb: int = Field(default=100, gt=0)
     max_video_size_mb: int = Field(default=300, gt=0)
+    max_report_size_mb: int = Field(default=30, gt=0)
 
     @field_validator("renderer_api_endpoint")
     @classmethod
@@ -78,6 +82,11 @@ class Config(BaseModel):
             and self.render_fps < self.render_speed
         ):
             raise ValueError("原生插值模式要求 render_fps 不低于 render_speed")
+
+        if not self.enable_battle_report and not self.enable_video_render:
+            raise ValueError(
+                "必须至少开启战报生成 (enable_battle_report) 或视频渲染 (enable_video_render) 之一"
+            )
 
         self.wows_render_temp_path.mkdir(parents=True, exist_ok=True)
         self.wows_render_output_path.mkdir(parents=True, exist_ok=True)

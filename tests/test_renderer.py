@@ -70,6 +70,7 @@ async def test_remote_render_streams_output(monkeypatch, tmp_path: Path):
         "interpolation": "native",
         "codec": "h264",
         "encoder": "auto",
+        "no_report": "true",
     }
 
 
@@ -133,7 +134,7 @@ async def test_local_render_passes_upstream_options(
     assert "50%" in terminal_output
     assert "5.00it/s" in terminal_output
     assert captured["kwargs"]["stdout"] == renderer.asyncio.subprocess.PIPE
-    assert captured["command"][-14:] == [
+    assert captured["command"][-15:] == [
         "--fps",
         "60",
         "--speed",
@@ -148,4 +149,66 @@ async def test_local_render_passes_upstream_options(
         "h264",
         "--encoder",
         "auto",
+        "--no-report",
     ]
+
+
+@pytest.mark.asyncio
+async def test_remote_battle_report_streams_output(monkeypatch, tmp_path: Path):
+    replay = tmp_path / "battle.wowsreplay"
+    output = tmp_path / "battle-report.png"
+    replay.write_bytes(b"replay")
+    FakeClient.response = FakeResponse([b"image-", b"png"])
+
+    monkeypatch.setattr(renderer.httpx, "AsyncClient", FakeClient)
+    monkeypatch.setattr(renderer.plugin_config, "renderer_api_token", "secret")
+
+    result = await renderer._do_render_battle_report(replay, output)
+
+    assert result[0] is True
+    assert output.read_bytes() == b"image-png"
+    assert not output.with_suffix(".png.part").exists()
+    method, url, kwargs = FakeClient.request
+    assert (method, url) == ("POST", "http://renderer.test/report")
+    assert kwargs["headers"] == {"Authorization": "Bearer secret"}
+
+
+@pytest.mark.asyncio
+async def test_local_battle_report_passes_command(monkeypatch, tmp_path: Path):
+    replay = tmp_path / "battle.wowsreplay"
+    output = tmp_path / "result-report.png"
+    replay.write_bytes(b"replay")
+    captured = {}
+
+    class Process:
+        returncode = None
+        pid = 42
+
+        def __init__(self):
+            self.stdout = renderer.asyncio.StreamReader()
+            self.stdout.feed_eof()
+
+        async def wait(self):
+            output.write_bytes(b"image")
+            self.returncode = 0
+
+    async def create_process(*command, **kwargs):
+        captured["command"] = list(command)
+        captured["kwargs"] = kwargs
+        return Process()
+
+    monkeypatch.setattr(renderer.plugin_config, "renderer_api_endpoint", None)
+    monkeypatch.setattr(renderer, "PYTHON_EXECUTABLE", Path("/usr/bin/python3"))
+    monkeypatch.setattr(renderer, "RENDERER_PROJECT_PATH", tmp_path)
+    monkeypatch.setattr(renderer.asyncio, "create_subprocess_exec", create_process)
+
+    success, _, _ = await renderer._do_render_battle_report(replay, output)
+
+    assert success is True
+    assert output.read_bytes() == b"image"
+    assert captured["command"][-3:] == [
+        "--report-only",
+        "--report-path",
+        str(output.resolve()),
+    ]
+

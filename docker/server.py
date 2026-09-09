@@ -112,7 +112,7 @@ class MaxBodySizeMiddleware:
         self.max_bytes = max_bytes
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] != "http" or scope.get("path") != "/render":
+        if scope["type"] != "http" or scope.get("path") not in {"/render", "/report"}:
             await self.app(scope, receive, send)
             return
 
@@ -240,6 +240,7 @@ def build_render_options(
     interpolation: str,
     codec: str,
     encoder: str,
+    no_report: bool = True,
 ) -> list[str]:
     if fps <= 0:
         raise HTTPException(
@@ -283,7 +284,7 @@ def build_render_options(
             detail="native interpolation requires fps to be at least speed",
         )
 
-    return [
+    options = [
         "--fps",
         str(fps),
         "--speed",
@@ -299,6 +300,9 @@ def build_render_options(
         "--encoder",
         encoder,
     ]
+    if no_report:
+        options.append("--no-report")
+    return options
 
 
 @app.get("/")
@@ -317,12 +321,13 @@ async def render_replay(
     interpolation: str = Form("native"),
     codec: str = Form("h264"),
     encoder: str = Form("auto"),
+    no_report: bool = Form(True),
     authorization: Optional[str] = Header(default=None),
     content_length: Optional[int] = Header(default=None),
 ):
     verify_token(authorization)
     render_options = build_render_options(
-        fps, speed, resolution, quality, interpolation, codec, encoder
+        fps, speed, resolution, quality, interpolation, codec, encoder, no_report
     )
     if content_length and content_length > MAX_UPLOAD_BYTES + 1024 * 1024:
         raise HTTPException(status_code=413, detail="Replay file is too large")
@@ -438,3 +443,131 @@ async def render_replay(
             return await _perform_render()
     else:
         return await _perform_render()
+
+
+@app.post("/report")
+async def render_report(
+    background_tasks: BackgroundTasks,
+    replay: UploadFile = File(...),
+    authorization: Optional[str] = Header(default=None),
+    content_length: Optional[int] = Header(default=None),
+):
+    verify_token(authorization)
+    if content_length and content_length > MAX_UPLOAD_BYTES + 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Replay file is too large")
+
+    filename = replay.filename
+    if not filename or not filename.lower().endswith(".wowsreplay"):
+        raise HTTPException(status_code=400, detail="Invalid file extension")
+
+    filename_base = os.path.basename(filename)
+    request_id = str(uuid.uuid4())
+    request_dir = TEMP_DIR / request_id
+
+    logger.info(f"收到战报生成请求 {request_id} 文件名: {filename_base}")
+
+    async def _perform_report():
+        request_dir.mkdir(mode=0o700)
+        input_path = request_dir / "input.wowsreplay"
+        expected_report_path = request_dir / "input-report.png"
+        log_path = request_dir / "renderer.log"
+
+        try:
+            uploaded = 0
+            with input_path.open("wb") as buffer:
+                while chunk := await replay.read(1024 * 1024):
+                    uploaded += len(chunk)
+                    if uploaded > MAX_UPLOAD_BYTES:
+                        raise HTTPException(
+                            status_code=413, detail="Replay file is too large"
+                        )
+                    buffer.write(chunk)
+        except asyncio.CancelledError:
+            cleanup_request_dir(request_dir)
+            raise
+        except Exception as e:
+            if isinstance(e, HTTPException):
+                cleanup_request_dir(request_dir)
+                raise
+            logger.error(f"保存上传文件失败: {e}")
+            cleanup_request_dir(request_dir)
+            raise HTTPException(status_code=500, detail="Failed to save file")
+
+        command = [
+            sys.executable,
+            "-m",
+            "render",
+            "--replay",
+            str(input_path),
+            "--report-only",
+            "--report-path",
+            str(expected_report_path),
+        ]
+        logger.info(f"执行战报生成请求: {request_id}")
+
+        try:
+            process = None
+            output_task = None
+            with log_path.open("wb") as log_file:
+                process = await asyncio.create_subprocess_exec(
+                    *command,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.STDOUT,
+                    start_new_session=True,
+                )
+                if process.stdout is None:
+                    raise RuntimeError("Renderer process output is unavailable")
+                output_task = asyncio.create_task(
+                    relay_process_output(process.stdout, log_file, request_id)
+                )
+                try:
+                    report_timeout = min(RENDER_TIMEOUT, 120)
+                    await asyncio.wait_for(process.wait(), timeout=report_timeout)
+                except asyncio.TimeoutError:
+                    await terminate_process_tree(process)
+                    await output_task
+                    cleanup_request_dir(request_dir)
+                    logger.error(f"战报生成超时: {request_id}")
+                    raise HTTPException(status_code=504, detail="Battle report timed out")
+                await output_task
+
+            if process.returncode != 0:
+                error_log = await asyncio.to_thread(read_log_tail, log_path)
+                logger.error(f"战报生成失败 {request_id}: {error_log}")
+                cleanup_request_dir(request_dir)
+                raise HTTPException(status_code=500, detail="Battle report generation failed")
+
+            if not expected_report_path.exists():
+                logger.error(f"未找到输出战报图片文件: {request_id}")
+                cleanup_request_dir(request_dir)
+                raise HTTPException(status_code=500, detail="Output battle report image missing")
+
+            logger.info(f"战报生成成功: {request_id}")
+            background_tasks.add_task(cleanup_request_dir, request_dir)
+
+            return FileResponse(
+                path=expected_report_path,
+                filename=f"{Path(filename_base).stem}-report.png",
+                media_type="image/png",
+            )
+
+        except asyncio.CancelledError:
+            if process and process.returncode is None:
+                await asyncio.shield(terminate_process_tree(process))
+            if output_task:
+                await asyncio.shield(output_task)
+            cleanup_request_dir(request_dir)
+            raise
+        except HTTPException:
+            raise
+        except Exception:
+            logger.exception(f"战报生成过程中发生意外错误: {request_id}")
+            cleanup_request_dir(request_dir)
+            raise HTTPException(status_code=500, detail="Internal battle report error")
+
+    if render_semaphore:
+        async with render_semaphore:
+            return await _perform_report()
+    else:
+        return await _perform_report()
+

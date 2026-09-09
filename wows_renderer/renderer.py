@@ -54,12 +54,16 @@ def _render_options() -> dict[str, str]:
         "interpolation": plugin_config.render_interpolation,
         "codec": plugin_config.render_codec,
         "encoder": plugin_config.render_encoder,
+        "no_report": "true",
     }
 
 
 def _append_render_options(command: list[str]) -> None:
     for name, value in _render_options().items():
-        command.extend((f"--{name}", value))
+        if name == "no_report":
+            command.append("--no-report")
+        else:
+            command.extend((f"--{name}", value))
 
 
 def _write_terminal_output(data: bytes) -> None:
@@ -282,3 +286,152 @@ async def render_replay(replay_path: Path, output_path: Path) -> tuple[bool, str
             return await _do_render_replay(replay_path, output_path)
     else:
         return await _do_render_replay(replay_path, output_path)
+
+
+async def _do_render_battle_report(
+    replay_path: Path, output_path: Path
+) -> tuple[bool, str, str]:
+    """
+    使用 minimap_renderer 生成 2.4K 战报全景长图 (内部函数)
+    """
+    # 1. 远程渲染模式
+    if plugin_config.renderer_api_endpoint:
+        logger.info(f"使用远程服务生成战报: {plugin_config.renderer_api_endpoint}")
+        partial_output_path = output_path.with_suffix(f"{output_path.suffix}.part")
+        try:
+            headers = {}
+            if plugin_config.renderer_api_token:
+                headers["Authorization"] = f"Bearer {plugin_config.renderer_api_token}"
+            timeout = min(plugin_config.render_timeout, 120)
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                with open(replay_path, "rb") as f:
+                    files = {
+                        "replay": (replay_path.name, f, "application/octet-stream")
+                    }
+                    async with client.stream(
+                        "POST",
+                        f"{plugin_config.renderer_api_endpoint}/report",
+                        files=files,
+                        headers=headers,
+                    ) as resp:
+                        if resp.status_code != 200:
+                            body = (await resp.aread()).decode(
+                                "utf-8", errors="replace"
+                            )[-500:]
+                            return (
+                                False,
+                                f"远程战报生成失败 (HTTP {resp.status_code})",
+                                body,
+                            )
+
+                        max_bytes = plugin_config.max_report_size_mb * 1024 * 1024
+                        content_length = resp.headers.get("content-length")
+                        if content_length and int(content_length) > max_bytes:
+                            return False, "远程战报图片超过大小限制", ""
+
+                        written = 0
+                        async with aiofiles.open(partial_output_path, "wb") as out_f:
+                            async for chunk in resp.aiter_bytes():
+                                written += len(chunk)
+                                if written > max_bytes:
+                                    return False, "远程战报图片超过大小限制", ""
+                                await out_f.write(chunk)
+
+            await asyncio.to_thread(os.replace, partial_output_path, output_path)
+            return True, "战报生成成功", "Remote report success"
+        except Exception as e:
+            logger.exception(f"远程战报生成异常: {e}")
+            return False, "远程战报服务连接失败", str(e)
+        finally:
+            if partial_output_path.exists():
+                await asyncio.to_thread(partial_output_path.unlink)
+
+    # 2. 本地渲染模式
+    if not PYTHON_EXECUTABLE or not PYTHON_EXECUTABLE.exists():
+        return False, f"渲染器Python解释器不存在: {PYTHON_EXECUTABLE}", ""
+
+    command = [
+        str(PYTHON_EXECUTABLE),
+        "-m",
+        "render",
+        "--replay",
+        str(replay_path.resolve()),
+        "--report-only",
+        "--report-path",
+        str(output_path.resolve()),
+    ]
+
+    logger.info(f"执行战报生成命令: {' '.join(command)}")
+    log_path = output_path.with_suffix(".report.log")
+    process = None
+    output_task = None
+
+    try:
+        process_kwargs = {}
+        if sys.platform == "win32":
+            process_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+        else:
+            process_kwargs["start_new_session"] = True
+
+        with log_path.open("wb") as log_file:
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+                cwd=RENDERER_PROJECT_PATH,
+                **process_kwargs,
+            )
+            if process.stdout is None:
+                raise RuntimeError("无法读取战报生成进程输出")
+            output_task = asyncio.create_task(
+                _relay_process_output(process.stdout, log_file, f"report:{replay_path.stem}")
+            )
+            timeout = min(plugin_config.render_timeout, 120)
+            try:
+                await asyncio.wait_for(process.wait(), timeout=timeout)
+            except asyncio.TimeoutError:
+                await _terminate_process_tree(process)
+                await output_task
+                return False, "战报生成超时，已中止处理", "Report generation timeout"
+            await output_task
+
+        output_log = await asyncio.to_thread(_read_log_tail, log_path)
+
+        if process.returncode == 0 and output_path.exists():
+            logger.info(f"战报生成成功: {output_path}")
+            return True, "战报生成成功", output_log
+        else:
+            return False, f"战报生成进程返回错误 (代码: {process.returncode})", output_log
+
+    except Exception as e:
+        logger.exception(f"战报生成过程异常: {e}")
+        return False, "战报生成过程发生异常", str(e)
+    except asyncio.CancelledError:
+        if process and process.returncode is None:
+            await asyncio.shield(_terminate_process_tree(process))
+        if output_task:
+            await asyncio.shield(output_task)
+        raise
+    finally:
+        if log_path.exists():
+            await asyncio.to_thread(log_path.unlink)
+
+
+async def render_battle_report(
+    replay_path: Path, output_path: Path
+) -> tuple[bool, str, str]:
+    """
+    使用 minimap_renderer 生成 2.4K 战报长图 (支持本地或远程调用)
+
+    Args:
+        replay_path: 回放文件路径
+        output_path: 输出战报图片路径
+
+    Returns:
+        (成功标志, 消息, 日志)
+    """
+    if render_semaphore:
+        async with render_semaphore:
+            return await _do_render_battle_report(replay_path, output_path)
+    else:
+        return await _do_render_battle_report(replay_path, output_path)

@@ -11,7 +11,7 @@ from nonebot.exception import FinishedException
 import httpx
 import aiofiles
 
-from .renderer import render_replay
+from .renderer import render_battle_report, render_replay
 from .utils import cleanup_files
 from .config import plugin_config
 
@@ -58,11 +58,29 @@ async def handle_replay_file(bot: Bot, event: GroupMessageEvent, matcher: Matche
     unique_id = str(uuid.uuid4())
     replay_file_path = TEMP_PATH / f"{unique_id}_{file_name}"
     video_file_path = OUTPUT_PATH / f"{unique_id}.mp4"
+    report_file_path = OUTPUT_PATH / f"{unique_id}_report.png"
+    files_to_clean = [replay_file_path, video_file_path, report_file_path]
+
+    should_render_report = plugin_config.enable_battle_report
+    should_render_video = (
+        plugin_config.enable_video_render and not plugin_config.render_report_only
+    )
 
     try:
-        await matcher.send(
-            f"收到回放文件「{file_name}」，开始准备渲染战局小地图视频...\n⏳ 这可能需要几分钟，请耐心等待"
-        )
+        if plugin_config.render_report_only:
+            await matcher.send(
+                f"收到回放文件「{file_name}」，正在生成 2.4K 战报全景长图..."
+            )
+        elif should_render_report and should_render_video:
+            await matcher.send(
+                f"收到回放文件「{file_name}」，正在处理...\n"
+                "📊 将率先生成战报长图，随后渲染小地图视频"
+            )
+        else:
+            await matcher.send(
+                f"收到回放文件「{file_name}」，开始准备渲染战局小地图视频...\n"
+                "⏳ 这可能需要几分钟，请耐心等待"
+            )
 
         # 1. 获取文件下载链接
         try:
@@ -96,10 +114,40 @@ async def handle_replay_file(bot: Bot, event: GroupMessageEvent, matcher: Matche
             logger.error(f"下载文件发生未知错误: {e}")
             await matcher.finish("❌ 下载回放文件失败，请稍后再试")
 
-        # 3. 渲染视频
+        # 3. 生成战报长图
+        if should_render_report:
+            report_ok, report_msg, report_log = await render_battle_report(
+                replay_file_path, report_file_path
+            )
+            if report_ok and report_file_path.exists():
+                logger.info(f"战报长图生成成功: {file_name}")
+                max_report_bytes = plugin_config.max_report_size_mb * 1024 * 1024
+                if report_file_path.stat().st_size <= max_report_bytes:
+                    try:
+                        async with aiofiles.open(report_file_path, "rb") as f:
+                            report_data = await f.read()
+                        await matcher.send(MessageSegment.image(report_data))
+                    except Exception as e:
+                        logger.error(f"发送战报长图失败: {e}")
+                else:
+                    logger.warning("战报长图超过大小限制，跳过发送")
+            else:
+                log_tail = report_log[-1000:] if report_log else "无详细日志"
+                logger.warning(f"战报生成失败: {report_msg}; 日志: {log_tail}")
+                if not should_render_video:
+                    await matcher.finish(f"❌ 抱歉，「{file_name}」战报生成失败\n{report_msg}")
+
+        # 如果仅生成战报，到这里结束
+        if not should_render_video:
+            return
+
+        # 4. 渲染视频
+        if should_render_report:
+            await matcher.send("⏳ 战报已送达，正在全力渲染战局小地图视频，请稍候...")
+
         success, message, log = await render_replay(replay_file_path, video_file_path)
 
-        # 4. 处理渲染结果
+        # 5. 处理渲染结果
         if success:
             logger.info(f"渲染成功: {file_name}")
             max_video_bytes = plugin_config.max_video_size_mb * 1024 * 1024
@@ -131,4 +179,4 @@ async def handle_replay_file(bot: Bot, event: GroupMessageEvent, matcher: Matche
 
     finally:
         # 清理临时文件
-        await cleanup_files([replay_file_path, video_file_path])
+        await cleanup_files(files_to_clean)

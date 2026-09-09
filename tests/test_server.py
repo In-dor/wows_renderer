@@ -67,11 +67,12 @@ def test_legacy_http_request_uses_encoder_defaults(monkeypatch, tmp_path: Path):
 
     assert response.status_code == 200
     assert response.content == b"video"
-    assert captured["command"][-4:] == (
+    assert captured["command"][-5:] == (
         "--codec",
         "h264",
         "--encoder",
         "auto",
+        "--no-report",
     )
     assert not (tmp_path / request_id).exists()
 
@@ -135,7 +136,7 @@ async def test_render_uses_private_request_directory(
     assert "5.00it/s" in terminal_output
     assert captured["kwargs"]["stdout"] == server.asyncio.subprocess.PIPE
     assert captured["command"][4] == str(request_dir / "input.wowsreplay")
-    assert captured["command"][-14:] == (
+    assert captured["command"][-15:] == (
         "--fps",
         "30",
         "--speed",
@@ -150,6 +151,7 @@ async def test_render_uses_private_request_directory(
         "h265",
         "--encoder",
         "vaapi",
+        "--no-report",
     )
     assert (request_dir / "input.wowsreplay").read_bytes() == b"replay-data"
 
@@ -232,3 +234,55 @@ def test_render_option_validation(options, detail):
 
     assert exc_info.value.status_code == 422
     assert detail in exc_info.value.detail
+
+
+def test_report_endpoint_success(monkeypatch, tmp_path: Path):
+    request_id = "550e8400-e29b-41d4-a716-446655440000"
+    monkeypatch.setattr(server, "TEMP_DIR", tmp_path)
+    monkeypatch.setattr(server.uuid, "uuid4", lambda: request_id)
+    monkeypatch.setattr(server, "API_TOKEN", None)
+    captured = {}
+
+    class Process:
+        returncode = None
+        pid = 42
+
+        def __init__(self):
+            self.stdout = server.asyncio.StreamReader()
+            self.stdout.feed_eof()
+
+        async def wait(self):
+            # 模拟生成 input-report.png
+            (tmp_path / request_id / "input-report.png").write_bytes(b"report-png-data")
+            self.returncode = 0
+
+    async def create_process(*command, **_kwargs):
+        captured["command"] = command
+        return Process()
+
+    monkeypatch.setattr(server.asyncio, "create_subprocess_exec", create_process)
+
+    response = TestClient(server.app).post(
+        "/report",
+        files={"replay": ("battle.wowsreplay", b"replay-data")},
+    )
+
+    assert response.status_code == 200
+    assert response.content == b"report-png-data"
+    assert response.headers["content-type"] == "image/png"
+    assert captured["command"][-3:] == (
+        "--report-only",
+        "--report-path",
+        str(tmp_path / request_id / "input-report.png"),
+    )
+    assert not (tmp_path / request_id).exists()
+
+
+def test_report_endpoint_rejects_non_replay():
+    response = TestClient(server.app).post(
+        "/report",
+        files={"replay": ("battle.txt", b"not-a-replay")},
+    )
+    assert response.status_code == 400
+    assert "Invalid file extension" in response.json()["detail"]
+

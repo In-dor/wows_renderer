@@ -20,11 +20,13 @@ _✨ 战舰世界小地图回放渲染插件 ✨_
 ## 📖 功能特点
 
 - **自动识别**: 监听群聊消息，自动捕获 `.wowsreplay` 后缀文件。
+- **📊 2.4K 战报全景长图**: 收到回放后秒级（~5秒）生成并发送官方结算风格 2.4K 超高清战报长图（包含基础经验与裸经验双列对照、潜在伤害、防空击落、击沉、主炮明细、车队分队标识与完整局内通讯记录）。
+- **🎬 小地图对局回放视频**: 渲染全局小地图动态轨迹视频，支持硬件加速编码（QSV / VAAPI / NVENC 等）与多倍速平滑补帧。
 - **双模式部署**:
-  - 🐳 **Docker 模式 (推荐)**: 渲染服务独立运行，环境隔离，不阻塞 Bot 进程，更新方便。
+  - 🐳 **Docker 模式 (推荐)**: 渲染服务独立运行，环境隔离，提供 `/render` 与 `/report` API，不阻塞 Bot 进程，更新方便。
   - 💻 **本地模式**: 直接调用本地 Python 环境，适合简单部署或调试。
-- **自动清理**: 渲染完成后自动清理临时文件，节省磁盘空间。
-- **灵活配置**: 支持自定义超时时间、文件路径及渲染参数。
+- **自动清理**: 渲染与战报生成完成后自动清理所有临时文件，节省磁盘空间。
+- **灵活配置**: 支持自定义是否仅出战报、是否渲染视频、超时时间、分辨率及视频参数。
 
 ## 💿 安装
 
@@ -77,11 +79,15 @@ pip install -r requirements.txt
 | `RENDER_INTERPOLATION`    | str  | native                   | 插值模式：native/blend/motion/duplicate        |
 | `RENDER_CODEC`            | str  | h264                     | 视频编码格式：h264/h265/av1                    |
 | `RENDER_ENCODER`          | str  | auto                     | 编码后端：auto/cpu/nvenc/qsv/vaapi/amf         |
+| `ENABLE_BATTLE_REPORT`    | bool | true                     | 是否生成并发送 2.4K 战报全景长图               |
+| `ENABLE_VIDEO_RENDER`     | bool | true                     | 是否渲染战局小地图动态视频                     |
+| `RENDER_REPORT_ONLY`      | bool | false                    | 是否仅生成战报长图 (跳过视频渲染)              |
 | `WOWS_RENDER_TEMP_PATH`   | Path | cache/wows_render/temp   | 下载回放文件的临时目录                         |
 | `WOWS_RENDER_OUTPUT_PATH` | Path | cache/wows_render/output | 输出视频的存储目录                             |
 | `MAX_CONCURRENT_RENDERS`  | int  | 0                        | Bot 端最大并发渲染数，0 表示不限制              |
 | `MAX_REPLAY_SIZE_MB`      | int  | 100                      | 最大回放文件大小                               |
 | `MAX_VIDEO_SIZE_MB`       | int  | 300                      | 最大渲染结果及发送视频大小                     |
+| `MAX_REPORT_SIZE_MB`      | int  | 30                       | 最大战报长图大小限制                           |
 | `ENABLE_CLEANUP`          | bool | true                     | 是否在处理结束后清理临时文件                   |
 
 ---
@@ -176,8 +182,11 @@ RENDER_ENCODER="auto"
 
 1.  将机器人拉入群聊。
 2.  发送 `.wowsreplay` 结尾的战舰世界回放文件。
-3.  机器人回复 "收到回放文件..." 并开始下载。
-4.  渲染完成后，机器人会发送生成的 MP4 视频。
+3.  机器人回复收到回放并开始下载。
+4.  约 5 秒内，机器人会率先发出 **2.4K 战报全景长图**。
+5.  对局小地图视频渲染完成后，机器人紧接着发送 **MP4 动态轨迹视频**。
+
+若仅需生成战报长图而无需渲染视频，可在配置中开启 `RENDER_REPORT_ONLY=true`。
 
 渲染期间，终端会实时显示上游渲染器的百分比、已完成/总迭代数、耗时、预计剩余时间和 `it/s`。Docker 模式可使用 `docker compose logs -f` 查看；本地模式直接显示在 Bot 终端。`it/s` 表示渲染循环速度，不是输出视频的播放帧率。
 
